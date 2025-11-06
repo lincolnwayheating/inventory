@@ -3,6 +3,9 @@
 // Complete Rewrite - Google Sheets as Single Source of Truth
 // ============================================
 
+// Most Recent Google Apps Script Web App URL
+// Last Updated: 2025-11-06
+// This is the deployed web app endpoint for the Google Apps Script
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl8H2urrCb2KWrHuWlwcqvuSeAT5Q93q4fztX3xg7o0dsCI0MHe9pIAKoo_CnM-Bg/exec';
 
 // Global State (loaded from Google Sheets)
