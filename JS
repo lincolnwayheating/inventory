@@ -32,24 +32,24 @@ document.addEventListener('DOMContentLoaded', function() {
     if (typeof ZXing !== 'undefined') {
         codeReader = new ZXing.BrowserMultiFormatReader();
     }
-    
+
     // Login handlers
     document.getElementById('loginBtn').addEventListener('click', login);
     document.getElementById('logoutBtn').addEventListener('click', logout);
     document.getElementById('refreshBtn').addEventListener('click', refreshData);
-    
+
     const pinInput = document.getElementById('pinInput');
     pinInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') login();
     });
-    
+
     // Auto-login when 4 digits entered
     pinInput.addEventListener('input', function(e) {
         if (this.value.length === 4) {
             setTimeout(() => login(), 100);
         }
     });
-    
+
     // Search inventory
     document.getElementById('searchInventory').addEventListener('input', function(e) {
         filterInventory(e.target.value);
@@ -61,7 +61,7 @@ document.addEventListener('DOMContentLoaded', function() {
 // ============================================
 function login() {
     const pin = document.getElementById('pinInput').value;
-    
+
     // Check lockout
     if (lockoutUntil && Date.now() < lockoutUntil) {
         const remainingSeconds = Math.ceil((lockoutUntil - Date.now()) / 1000);
@@ -71,7 +71,7 @@ function login() {
         document.getElementById('pinInput').value = '';
         return;
     }
-    
+
     // Reset lockout if time passed
     if (lockoutUntil && Date.now() >= lockoutUntil) {
         lockoutUntil = 0;
@@ -79,9 +79,9 @@ function login() {
         localStorage.setItem('lockoutUntil', '0');
         localStorage.setItem('loginAttempts', '0');
     }
-    
+
     showProcessing(true);
-    
+
     // Load users from Google Sheets
     fetch(SCRIPT_URL + '?action=readUsers')
         .then(response => response.json())
@@ -111,38 +111,38 @@ function login() {
                         };
                     }
                 }
-                
+
                 const user = users[pin];
-                
+
                 if (user) {
                     // Successful login
                     loginAttempts = 0;
                     lockoutUntil = 0;
                     localStorage.setItem('loginAttempts', '0');
                     localStorage.setItem('lockoutUntil', '0');
-                    
+
                     currentUser = user.name;
                     currentUserPin = pin;
                     isOwner = user.isOwner;
                     userTruck = user.truck;
-                    
+
                     document.getElementById('loginScreen').style.display = 'none';
                     document.getElementById('appContainer').style.display = 'block';
                     document.getElementById('userBadge').textContent = user.name + (user.isOwner ? ' (Owner)' : '');
-                    
+
                     init();
                 } else {
                     // Failed login
                     showProcessing(false);
                     loginAttempts++;
                     localStorage.setItem('loginAttempts', loginAttempts.toString());
-                    
+
                     if (loginAttempts >= LOCKOUT_TIMES.length) {
                         loginAttempts = LOCKOUT_TIMES.length - 1;
                     }
-                    
+
                     const lockoutTime = LOCKOUT_TIMES[loginAttempts];
-                    
+
                     if (lockoutTime > 0) {
                         lockoutUntil = Date.now() + lockoutTime;
                         localStorage.setItem('lockoutUntil', lockoutUntil.toString());
@@ -152,7 +152,7 @@ function login() {
                         const attemptsLeft = 5 - loginAttempts;
                         showToast(`Invalid PIN. ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining.`, 'error');
                     }
-                    
+
                     document.getElementById('pinInput').value = '';
                 }
             }
@@ -178,25 +178,25 @@ function logout() {
 
 async function init() {
     showProcessing(true);
-    
+
     try {
         // Load data sequentially with small delays to avoid rate limiting
         await loadCategories();
         await new Promise(resolve => setTimeout(resolve, 200));
-        
+
         await loadTrucks();
         await new Promise(resolve => setTimeout(resolve, 200));
-        
+
         await loadInventory();
         await new Promise(resolve => setTimeout(resolve, 200));
-        
+
         await loadHistory();
-        
+
         buildTabs();
         setupEventListeners();
         populateDropdowns();
         updateDashboard();
-        
+
         showProcessing(false);
     } catch (error) {
         showProcessing(false);
@@ -204,28 +204,26 @@ async function init() {
         showToast('Error loading data. Please refresh.', 'error');
     }
 }
-```
-
-### 6. Quick Test: Verify Your Apps Script Deployment
-
-Open this URL in your browser (replace with your actual script URL):
-```
-https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec?action=readTrucks
 
 async function refreshData() {
     showProcessing(true);
-    
+
     try {
-        await Promise.all([
-            loadCategories(),
-            loadTrucks(),
-            loadInventory(),
-            loadHistory()
-        ]);
-        
+        // Load data sequentially with delays
+        await loadCategories();
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        await loadTrucks();
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        await loadInventory();
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        await loadHistory();
+
         populateDropdowns();
         updateDashboard();
-        
+
         // Refresh current tab
         const activeTab = document.querySelector('.content.active');
         if (activeTab) {
@@ -236,7 +234,7 @@ async function refreshData() {
             if (tabId === 'settings') updateUserList();
             if (tabId === 'quick-load') updateQuickLoadList();
         }
-        
+
         showProcessing(false);
         showToast('Data refreshed!');
     } catch (error) {
@@ -252,7 +250,7 @@ async function refreshData() {
 async function loadCategories() {
     const response = await fetch(SCRIPT_URL + '?action=readCategories');
     const result = await response.json();
-    
+
     if (result.success && result.data) {
         categories = {};
         for (let i = 1; i < result.data.length; i++) {
@@ -271,16 +269,16 @@ async function loadCategories() {
 async function loadTrucks() {
     try {
         const response = await fetch(SCRIPT_URL + '?action=readTrucks');
-        
+
         if (!response.ok) {
             if (response.status === 429) {
                 throw new Error('Too many requests. Please wait a moment and try again.');
             }
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-        
+
         const result = await response.json();
-        
+
         if (result.success && result.data) {
             trucks = {};
             for (let i = 1; i < result.data.length; i++) {
@@ -288,25 +286,25 @@ async function loadTrucks() {
                 if (row[0]) {
                     trucks[row[0]] = {
                         name: row[1],
-                        active: row[2] === 'TRUE'
+                        active: (row[2] === 'TRUE' || row[2] === true)
                     };
                 }
             }
         }
     } catch (error) {
         console.error('Load trucks error:', error);
-        throw error; // Re-throw to be caught by the calling function
+        throw error;
     }
 }
 
 async function loadInventory() {
     const response = await fetch(SCRIPT_URL + '?action=readInventory');
     const result = await response.json();
-    
+
     if (result.success && result.data && result.data.length > 1) {
         inventory = {};
         const headers = result.data[0];
-        
+
         for (let i = 1; i < result.data.length; i++) {
             const row = result.data[i];
             if (row[0]) {
@@ -317,20 +315,20 @@ async function loadInventory() {
                     barcode: row[4] || '',
                     shop: parseInt(row[5]) || 0
                 };
-                
+
                 // Dynamic truck columns
                 let colIndex = 6;
                 Object.keys(trucks).forEach(truckId => {
                     item[truckId] = parseInt(row[colIndex]) || 0;
                     colIndex++;
                 });
-                
+
                 item.minStock = parseInt(row[colIndex]) || 0;
                 item.minTruckStock = parseInt(row[colIndex + 1]) || 0;
                 item.price = parseFloat(row[colIndex + 2]) || 0;
                 item.purchaseLink = row[colIndex + 3] || '';
                 item.season = row[colIndex + 4] || 'year-round';
-                
+
                 inventory[row[0]] = item;
             }
         }
@@ -340,7 +338,7 @@ async function loadInventory() {
 async function loadHistory() {
     const response = await fetch(SCRIPT_URL + '?action=readHistory');
     const result = await response.json();
-    
+
     if (result.success && result.data && result.data.length > 1) {
         history = [];
         for (let i = 1; i < result.data.length; i++) {
@@ -384,16 +382,9 @@ function buildTabs() {
         console.error('Tab container not found!');
         return;
     }
-    
+
     tabContainer.innerHTML = '';
-    
-    console.log('=== TAB BUILD DEBUG ===');
-    console.log('Current User:', currentUser);
-    console.log('Current PIN:', currentUserPin);
-    console.log('Is Owner:', isOwner);
-    console.log('User Object:', users[currentUserPin]);
-    console.log('====================');
-    
+
     const tabs = [
         { id: 'dashboard', label: '📊 Dashboard', permission: null },
         { id: 'load-truck', label: '📦 Load Truck', permission: 'loadTruck' },
@@ -406,7 +397,7 @@ function buildTabs() {
         { id: 'trucks', label: '🚚 Trucks', permission: 'manageTrucks' },
         { id: 'settings', label: '⚙️ Settings', permission: 'manageUsers' }
     ];
-    
+
     tabs.forEach((tab, i) => {
         // Dashboard has no permission requirement
         if (!tab.permission) {
@@ -416,10 +407,9 @@ function buildTabs() {
             btn.setAttribute('data-tab-id', tab.id);
             btn.onclick = () => switchTab(tab.id);
             tabContainer.appendChild(btn);
-            console.log('✅ Added:', tab.label);
             return;
         }
-        
+
         // Check permission
         if (hasPermission(tab.permission)) {
             const btn = document.createElement('button');
@@ -428,32 +418,28 @@ function buildTabs() {
             btn.setAttribute('data-tab-id', tab.id);
             btn.onclick = () => switchTab(tab.id);
             tabContainer.appendChild(btn);
-            console.log('✅ Added:', tab.label);
-        } else {
-            console.log('❌ Skipped (no permission):', tab.label);
         }
     });
-    
-    console.log('Total tabs in DOM:', document.querySelectorAll('.tab').length);
 }
+
 function switchTab(tabName) {
     // Remove active from all tabs and content
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
-    
+
     // Find and activate the correct tab
     const clickedTab = document.querySelector(`.tab[data-tab-id="${tabName}"]`);
     if (clickedTab) {
         clickedTab.classList.add('active');
     }
-    
+
     // Show content
     const content = document.getElementById(tabName);
     if (content) {
         content.classList.add('active');
         content.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    
+
     // Load tab-specific data
     if (tabName === 'dashboard') updateDashboard();
     if (tabName === 'history') updateHistory();
@@ -477,12 +463,12 @@ function setupEventListeners() {
     document.getElementById('addCategoryBtn')?.addEventListener('click', addCategory);
     document.getElementById('addTruckBtn')?.addEventListener('click', addTruck);
     document.getElementById('quickLoadBtn')?.addEventListener('click', processQuickLoad);
-    
+
     const clearHistoryBtn = document.getElementById('clearHistoryBtn');
     if (clearHistoryBtn) {
         clearHistoryBtn.addEventListener('click', clearHistory);
     }
-    
+
     // Barcode buttons
     document.querySelectorAll('.barcode-btn').forEach(btn => {
         btn.addEventListener('click', function() {
@@ -500,30 +486,30 @@ function startBarcodeScanner(targetInputId) {
         showToast('Barcode scanner not available. Enter manually.', 'error');
         return;
     }
-    
+
     const video = document.createElement('video');
     video.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:10000;';
     document.body.appendChild(video);
-    
+
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:10001;display:flex;flex-direction:column;align-items:center;justify-content:center;';
     overlay.innerHTML = '<div style="background:white;padding:20px;border-radius:10px;text-align:center;max-width:90%;"><h2>Scanning...</h2><p>Point camera at barcode</p><button id="cancelScan" style="margin-top:20px;padding:10px 20px;background:#e74c3c;color:white;border:none;border-radius:5px;cursor:pointer;">Cancel</button></div>';
     document.body.appendChild(overlay);
-    
+
     codeReader.decodeFromVideoDevice(null, video, (result, err) => {
         if (result) {
             document.getElementById(targetInputId).value = result.text;
             codeReader.reset();
             document.body.removeChild(video);
             document.body.removeChild(overlay);
-            
+
             // Lookup barcode
             if (targetInputId === 'loadBarcode') lookupBarcode('load', result.text);
             if (targetInputId === 'returnBarcode') lookupBarcode('return', result.text);
             if (targetInputId === 'usePartsBarcode') lookupBarcode('use', result.text);
         }
     });
-    
+
     document.getElementById('cancelScan').onclick = () => {
         codeReader.reset();
         document.body.removeChild(video);
@@ -533,7 +519,7 @@ function startBarcodeScanner(targetInputId) {
 
 function lookupBarcode(context, code) {
     const partId = Object.keys(inventory).find(id => inventory[id].barcode === code);
-    
+
     if (partId) {
         if (context === 'load') document.getElementById('loadPart').value = partId;
         if (context === 'return') document.getElementById('returnPart').value = partId;
@@ -552,7 +538,7 @@ async function addPart() {
         showToast('No permission to add parts', 'error');
         return;
     }
-    
+
     const name = document.getElementById('partName').value.trim();
     const categoryId = document.getElementById('partCategory').value;
     const partNumber = document.getElementById('partNumber').value.trim();
@@ -563,36 +549,36 @@ async function addPart() {
     const shopQty = parseInt(document.getElementById('shopQty').value);
     const minStock = parseInt(document.getElementById('minStock').value);
     const minTruckStock = parseInt(document.getElementById('minTruckStock').value);
-    
+
     if (!name) {
         showToast('Enter part name', 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     const id = name.toLowerCase().replace(/[^a-z0-9]/g, '') + Date.now();
-    
+
     const newPart = {
-        name, 
-        category: categoryId, 
-        partNumber, 
-        barcode, 
-        price, 
-        purchaseLink: link, 
+        name,
+        category: categoryId,
+        partNumber,
+        barcode,
+        price,
+        purchaseLink: link,
         season,
         shop: shopQty,
-        minStock, 
+        minStock,
         minTruckStock
     };
-    
+
     // Initialize all truck quantities to 0
     Object.keys(trucks).forEach(truckId => {
         newPart[truckId] = 0;
     });
-    
+
     inventory[id] = newPart;
-    
+
     try {
         // Save to Google Sheets
         await fetch(SCRIPT_URL + '?action=writeInventory', {
@@ -600,7 +586,7 @@ async function addPart() {
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(inventory)
         });
-        
+
         // Log transaction
         await addTransaction({
             timestamp: new Date().toLocaleString(),
@@ -615,9 +601,9 @@ async function addPart() {
             lat: '',
             lon: ''
         });
-        
+
         await loadInventory();
-        
+
         // Clear form
         document.getElementById('partName').value = '';
         document.getElementById('partNumber').value = '';
@@ -625,7 +611,7 @@ async function addPart() {
         document.getElementById('partPrice').value = '';
         document.getElementById('partLink').value = '';
         document.getElementById('shopQty').value = '0';
-        
+
         populateDropdowns();
         updateDashboard();
         showProcessing(false);
@@ -642,37 +628,37 @@ async function loadTruck() {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const partId = document.getElementById('loadPart').value;
     const qty = parseInt(document.getElementById('loadQty').value);
     const truck = document.getElementById('loadTruck').value;
-    
+
     if (!partId) {
         showToast('Select a part', 'error');
         return;
     }
-    
+
     const part = inventory[partId];
     if (part.shop < qty) {
         showToast(`Only ${part.shop} available in shop`, 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     part.shop -= qty;
     part[truck] += qty;
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=writeInventory', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(inventory)
         });
-        
+
         const location = await getLocation();
         const truckName = trucks[truck]?.name || truck;
-        
+
         await addTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
@@ -686,14 +672,14 @@ async function loadTruck() {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
-        
+
         await loadInventory();
-        
+
         // Clear form
         document.getElementById('loadBarcode').value = '';
         document.getElementById('loadQty').value = '1';
         document.getElementById('loadPart').value = '';
-        
+
         updateDashboard();
         showProcessing(false);
         showToast(`${qty} loaded onto ${truckName}!`);
@@ -709,37 +695,37 @@ async function returnToShop() {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const truck = document.getElementById('returnTruck').value;
     const partId = document.getElementById('returnPart').value;
     const qty = parseInt(document.getElementById('returnQty').value);
-    
+
     if (!partId) {
         showToast('Select a part', 'error');
         return;
     }
-    
+
     const part = inventory[partId];
     if (part[truck] < qty) {
         showToast(`Only ${part[truck]} available on truck`, 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     part[truck] -= qty;
     part.shop += qty;
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=writeInventory', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(inventory)
         });
-        
+
         const location = await getLocation();
         const truckName = trucks[truck]?.name || truck;
-        
+
         await addTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
@@ -753,15 +739,15 @@ async function returnToShop() {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
-        
+
         await loadInventory();
-        
+
         // Clear form
         document.getElementById('returnBarcode').value = '';
         document.getElementById('returnQty').value = '1';
         document.getElementById('returnPart').value = '';
         updateReturnPartsList();
-        
+
         updateDashboard();
         showProcessing(false);
         showToast(`${qty} returned to shop!`);
@@ -777,37 +763,37 @@ async function useParts() {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const truck = document.getElementById('usePartsTruck').value;
     const partId = document.getElementById('usePartsPart').value;
     const qty = parseInt(document.getElementById('usePartsQty').value);
     const jobName = document.getElementById('jobName').value.trim() || 'Job';
-    
+
     if (!partId) {
         showToast('Select a part', 'error');
         return;
     }
-    
+
     const part = inventory[partId];
     if (part[truck] < qty) {
         showToast(`Only ${part[truck]} available on truck`, 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     part[truck] -= qty;
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=writeInventory', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(inventory)
         });
-        
+
         const location = await getLocation();
         const truckName = trucks[truck]?.name || truck;
-        
+
         await addTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
@@ -821,16 +807,16 @@ async function useParts() {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
-        
+
         await loadInventory();
-        
+
         // Clear form
         document.getElementById('usePartsBarcode').value = '';
         document.getElementById('jobName').value = '';
         document.getElementById('usePartsQty').value = '1';
         document.getElementById('usePartsPart').value = '';
         updateUsePartsList();
-        
+
         updateDashboard();
         showProcessing(false);
         showToast('Parts used and logged!');
@@ -847,29 +833,29 @@ async function useParts() {
 async function updateQuickLoadList() {
     const container = document.getElementById('quickLoadList');
     const btn = document.getElementById('quickLoadBtn');
-    
+
     if (!container) return;
-    
+
     showProcessing(true);
-    
+
     try {
         const response = await fetch(SCRIPT_URL + '?action=getLowStockItems');
         const result = await response.json();
-        
+
         if (result.success && result.items && result.items.length > 0) {
             container.innerHTML = '';
-            
+
             result.items.forEach((item, index) => {
                 const div = document.createElement('div');
                 div.className = 'quick-load-item';
-                
+
                 let needsText = '';
                 Object.keys(item.needed).forEach(truckId => {
                     const truckName = trucks[truckId]?.name || truckId;
                     needsText += `${truckName} needs: ${item.needed[truckId]} | `;
                 });
                 needsText += `Shop has: ${item.shopQty}`;
-                
+
                 div.innerHTML = `
                     <input type="checkbox" class="quick-load-checkbox" data-part-id="${item.id}" data-index="${index}">
                     <div style="flex: 1;">
@@ -877,19 +863,19 @@ async function updateQuickLoadList() {
                         <br><small style="color: #666;">${needsText}</small>
                     </div>
                 `;
-                
+
                 // Store the needed quantities
                 div.dataset.needed = JSON.stringify(item.needed);
-                
+
                 container.appendChild(div);
             });
-            
+
             btn.style.display = 'block';
         } else {
             container.innerHTML = '<p style="color: #28a745;">✅ All trucks are fully stocked!</p>';
             btn.style.display = 'none';
         }
-        
+
         showProcessing(false);
     } catch (error) {
         showProcessing(false);
@@ -900,31 +886,31 @@ async function updateQuickLoadList() {
 
 async function processQuickLoad() {
     const checkboxes = document.querySelectorAll('.quick-load-checkbox:checked');
-    
+
     if (checkboxes.length === 0) {
         showToast('Select at least one item', 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     try {
         const updates = [];
-        
+
         checkboxes.forEach(checkbox => {
             const partId = checkbox.getAttribute('data-part-id');
             const item = checkbox.closest('.quick-load-item');
             const needed = JSON.parse(item.dataset.needed);
-            
+
             const part = inventory[partId];
-            
+
             // Load each truck with what it needs
             Object.keys(needed).forEach(truckId => {
                 const qty = needed[truckId];
                 if (part.shop >= qty) {
                     part.shop -= qty;
                     part[truckId] += qty;
-                    
+
                     updates.push({
                         partName: part.name,
                         truck: truckId,
@@ -933,14 +919,14 @@ async function processQuickLoad() {
                 }
             });
         });
-        
+
         // Save inventory
         await fetch(SCRIPT_URL + '?action=writeInventory', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(inventory)
         });
-        
+
         // Log transactions
         const location = await getLocation();
         for (const update of updates) {
@@ -959,11 +945,11 @@ async function processQuickLoad() {
                 lon: location ? location.lon : ''
             });
         }
-        
+
         await loadInventory();
         updateDashboard();
         await updateQuickLoadList();
-        
+
         showProcessing(false);
         showToast(`${updates.length} item${updates.length !== 1 ? 's' : ''} loaded!`);
     } catch (error) {
@@ -979,35 +965,35 @@ async function processQuickLoad() {
 function populateCategoryDropdown(selectId) {
     const select = document.getElementById(selectId);
     if (!select) return;
-    
+
     select.innerHTML = '<option value="">-- Select Category --</option>';
-    
+
     function addCategoryOptions(parentId = null, prefix = '') {
         const sorted = Object.keys(categories)
             .filter(id => categories[id].parent === parentId)
             .sort((a, b) => (categories[a].order || 0) - (categories[b].order || 0));
-        
+
         sorted.forEach(id => {
             const opt = document.createElement('option');
             opt.value = id;
             opt.textContent = prefix + categories[id].name;
             select.appendChild(opt);
-            
+
             addCategoryOptions(id, prefix + '  ');
         });
     }
-    
+
     addCategoryOptions();
 }
 
 function populateDropdowns() {
     populateCategoryDropdown('partCategory');
-    
+
     // Load Truck screen
     const loadPart = document.getElementById('loadPart');
     if (loadPart) {
         loadPart.innerHTML = '<option value="">-- Select Part --</option>';
-        
+
         const byCategory = {};
         Object.keys(inventory).forEach(id => {
             const catId = inventory[id].category || 'other';
@@ -1015,14 +1001,14 @@ function populateDropdowns() {
             if (!byCategory[catPath]) byCategory[catPath] = [];
             byCategory[catPath].push({id, name: inventory[id].name});
         });
-        
+
         Object.keys(byCategory).sort().forEach(catPath => {
             const optgroup = document.createElement('optgroup');
             optgroup.label = catPath;
-            
+
             // Sort parts alphabetically within category
             byCategory[catPath].sort((a, b) => a.name.localeCompare(b.name));
-            
+
             byCategory[catPath].forEach(item => {
                 const opt = document.createElement('option');
                 opt.value = item.id;
@@ -1032,7 +1018,7 @@ function populateDropdowns() {
             loadPart.appendChild(optgroup);
         });
     }
-    
+
     const loadTruck = document.getElementById('loadTruck');
     if (loadTruck) {
         loadTruck.innerHTML = '';
@@ -1046,7 +1032,7 @@ function populateDropdowns() {
             loadTruck.value = userTruck;
         }
     }
-    
+
     // Return to Shop screen
     const returnTruck = document.getElementById('returnTruck');
     if (returnTruck) {
@@ -1062,7 +1048,7 @@ function populateDropdowns() {
         }
         updateReturnPartsList();
     }
-    
+
     // Use Parts screen
     const usePartsTruck = document.getElementById('usePartsTruck');
     if (usePartsTruck) {
@@ -1084,9 +1070,9 @@ function updateReturnPartsList() {
     const truck = document.getElementById('returnTruck')?.value;
     const select = document.getElementById('returnPart');
     if (!select || !truck) return;
-    
+
     select.innerHTML = '<option value="">-- Select Part --</option>';
-    
+
     const byCategory = {};
     Object.keys(inventory).forEach(id => {
         const part = inventory[id];
@@ -1096,14 +1082,14 @@ function updateReturnPartsList() {
             byCategory[catPath].push({id, name: part.name, qty: part[truck]});
         }
     });
-    
+
     Object.keys(byCategory).sort().forEach(catPath => {
         const optgroup = document.createElement('optgroup');
         optgroup.label = catPath;
-        
+
         // Sort alphabetically
         byCategory[catPath].sort((a, b) => a.name.localeCompare(b.name));
-        
+
         byCategory[catPath].forEach(item => {
             const opt = document.createElement('option');
             opt.value = item.id;
@@ -1118,9 +1104,9 @@ function updateUsePartsList() {
     const truck = document.getElementById('usePartsTruck')?.value;
     const select = document.getElementById('usePartsPart');
     if (!select || !truck) return;
-    
+
     select.innerHTML = '<option value="">-- Select Part --</option>';
-    
+
     const byCategory = {};
     Object.keys(inventory).forEach(id => {
         const part = inventory[id];
@@ -1130,14 +1116,14 @@ function updateUsePartsList() {
             byCategory[catPath].push({id, name: part.name, qty: part[truck]});
         }
     });
-    
+
     Object.keys(byCategory).sort().forEach(catPath => {
         const optgroup = document.createElement('optgroup');
         optgroup.label = catPath;
-        
+
         // Sort alphabetically
         byCategory[catPath].sort((a, b) => a.name.localeCompare(b.name));
-        
+
         byCategory[catPath].forEach(item => {
             const opt = document.createElement('option');
             opt.value = item.id;
@@ -1154,21 +1140,21 @@ function updateUsePartsList() {
 function updateDashboard() {
     const statsContainer = document.getElementById('statsContainer');
     if (!statsContainer) return;
-    
+
     const shopTotal = Object.values(inventory).reduce((sum, p) => sum + p.shop, 0);
-    
+
     let statsHTML = `
         <div class="stat-card"><h3>${Object.keys(inventory).length}</h3><p>Total Parts</p></div>
         <div class="stat-card"><h3>${shopTotal}</h3><p>Shop</p></div>
     `;
-    
+
     Object.keys(trucks).filter(id => trucks[id].active).forEach(truckId => {
         const total = Object.values(inventory).reduce((sum, p) => sum + (p[truckId] || 0), 0);
         statsHTML += `<div class="stat-card"><h3>${total}</h3><p>${trucks[truckId].name}</p></div>`;
     });
-    
+
     statsContainer.innerHTML = statsHTML;
-    
+
     renderInventoryTable();
 }
 
@@ -1176,49 +1162,49 @@ function renderInventoryTable(filteredInventory = null) {
     const tbody = document.getElementById('inventoryBody');
     const header = document.getElementById('inventoryHeader');
     if (!tbody || !header) return;
-    
+
     let headerHTML = '<th>Part</th><th>Category</th><th>Part #</th><th>Shop</th>';
     Object.keys(trucks).filter(id => trucks[id].active).forEach(truckId => {
         headerHTML += `<th>${trucks[truckId].name}</th>`;
     });
     headerHTML += '<th>Min</th><th>Status</th>';
     header.innerHTML = headerHTML;
-    
+
     tbody.innerHTML = '';
-    
+
     const displayInventory = filteredInventory || inventory;
-    
+
     const byCategory = {};
     Object.keys(displayInventory).forEach(id => {
         const catPath = getCategoryPath(displayInventory[id].category);
         if (!byCategory[catPath]) byCategory[catPath] = [];
         byCategory[catPath].push({id, ...displayInventory[id]});
     });
-    
+
     Object.keys(byCategory).sort().forEach(catPath => {
         // Sort parts alphabetically within category
         byCategory[catPath].sort((a, b) => a.name.localeCompare(b.name));
-        
+
         byCategory[catPath].forEach(p => {
             const row = tbody.insertRow();
             if (p.shop < p.minStock) row.classList.add('low-stock');
-            
+
             let rowHTML = `
                 <td><strong>${p.name}</strong></td>
                 <td>${catPath}</td>
                 <td>${p.partNumber}</td>
                 <td>${p.shop}</td>
             `;
-            
+
             Object.keys(trucks).filter(id => trucks[id].active).forEach(truckId => {
                 rowHTML += `<td>${p[truckId] || 0}</td>`;
             });
-            
+
             rowHTML += `
                 <td>${p.minStock}</td>
                 <td>${p.shop < p.minStock ? '⚠️ LOW' : '✅ OK'}</td>
             `;
-            
+
             row.innerHTML = rowHTML;
         });
     });
@@ -1229,19 +1215,19 @@ function filterInventory(searchTerm) {
         renderInventoryTable();
         return;
     }
-    
+
     const term = searchTerm.toLowerCase();
     const filtered = {};
-    
+
     Object.keys(inventory).forEach(id => {
         const part = inventory[id];
-        if (part.name.toLowerCase().includes(term) || 
+        if (part.name.toLowerCase().includes(term) ||
             part.partNumber.toLowerCase().includes(term) ||
             getCategoryPath(part.category).toLowerCase().includes(term)) {
             filtered[id] = part;
         }
     });
-    
+
     renderInventoryTable(filtered);
 }
 
@@ -1251,23 +1237,23 @@ function filterInventory(searchTerm) {
 function updateHistory() {
     const list = document.getElementById('historyList');
     if (!list) return;
-    
+
     const canEdit = hasPermission('editHistory');
-    
+
     // Show/hide clear history button
     const clearBtn = document.getElementById('clearHistoryBtn');
     if (clearBtn) {
         clearBtn.style.display = canEdit ? 'block' : 'none';
     }
-    
+
     if (history.length === 0) {
         list.innerHTML = '<p>No activity yet</p>';
         return;
     }
-    
+
     // Filter history based on permissions
     const displayHistory = isOwner ? history : history.filter(e => e.tech === currentUser);
-    
+
     list.innerHTML = displayHistory.map(e => `
         <div class="history-item">
             <div style="display: flex; justify-content: space-between; align-items: start;">
@@ -1291,7 +1277,7 @@ function clearHistory() {
         return;
     }
     if (!confirm('This will clear the transaction log in the app only. Google Sheets history will remain. Continue?')) return;
-    
+
     history = [];
     updateHistory();
     showToast('Local history cleared');
@@ -1302,31 +1288,31 @@ function clearHistory() {
 // ============================================
 function getCategoryPath(categoryId) {
     if (!categoryId || !categories[categoryId]) return 'Uncategorized';
-    
+
     const path = [];
     let current = categoryId;
     let depth = 0;
-    
+
     while (current && depth < 10) {
         if (!categories[current]) break;
         path.unshift(categories[current].name);
         current = categories[current].parent;
         depth++;
     }
-    
+
     return path.join(' > ');
 }
 
 function updateCategoryManager() {
     if (!hasPermission('manageCategories')) return;
-    
+
     const container = document.getElementById('categoryList');
     if (!container) return;
-    
+
     populateCategoryParentDropdown();
-    
+
     container.innerHTML = '';
-    
+
     function renderCategory(id, level = 0) {
         const cat = categories[id];
         const div = document.createElement('div');
@@ -1338,7 +1324,7 @@ function updateCategoryManager() {
             margin-left: ${level * 30}px;
             border-left: ${level > 0 ? '3px solid #667eea' : 'none'};
         `;
-        
+
         div.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
@@ -1351,15 +1337,15 @@ function updateCategoryManager() {
                 </div>
             </div>
         `;
-        
+
         container.appendChild(div);
-        
+
         Object.keys(categories)
             .filter(childId => categories[childId].parent === id)
             .sort((a, b) => (categories[a].order || 0) - (categories[b].order || 0))
             .forEach(childId => renderCategory(childId, level + 1));
     }
-    
+
     Object.keys(categories)
         .filter(id => !categories[id].parent)
         .sort((a, b) => (categories[a].order || 0) - (categories[b].order || 0))
@@ -1371,20 +1357,20 @@ async function addCategory() {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const name = document.getElementById('newCategoryName').value.trim();
     const parent = document.getElementById('newCategoryParent').value || null;
-    
+
     if (!name) {
         showToast('Enter category name', 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     const id = name.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now();
     const maxOrder = Math.max(0, ...Object.values(categories).map(c => c.order || 0));
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=saveCategory', {
             method: 'POST',
@@ -1396,14 +1382,14 @@ async function addCategory() {
                 order: maxOrder + 1
             })
         });
-        
+
         await loadCategories();
         populateDropdowns();
         updateCategoryManager();
-        
+
         document.getElementById('newCategoryName').value = '';
         document.getElementById('newCategoryParent').value = '';
-        
+
         showProcessing(false);
         showToast('Category added!');
     } catch (error) {
@@ -1418,13 +1404,13 @@ async function editCategory(id) {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const cat = categories[id];
     const newName = prompt('Edit category name:', cat.name);
     if (!newName || newName === cat.name) return;
-    
+
     showProcessing(true);
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=saveCategory', {
             method: 'POST',
@@ -1436,11 +1422,11 @@ async function editCategory(id) {
                 order: cat.order
             })
         });
-        
+
         await loadCategories();
         populateDropdowns();
         updateCategoryManager();
-        
+
         showProcessing(false);
         showToast('Category updated!');
     } catch (error) {
@@ -1455,27 +1441,27 @@ async function deleteCategory(id) {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const hasChildren = Object.values(categories).some(c => c.parent === id);
     if (hasChildren) {
         showToast('Cannot delete category with subcategories', 'error');
         return;
     }
-    
+
     const partsInCategory = Object.values(inventory).filter(p => p.category === id).length;
     if (partsInCategory > 0) {
         if (!confirm(`${partsInCategory} parts use this category. They will be moved to "Other". Continue?`)) return;
     }
-    
+
     showProcessing(true);
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=deleteCategory', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({ id: id })
         });
-        
+
         // Update parts if needed
         if (partsInCategory > 0) {
             Object.keys(inventory).forEach(partId => {
@@ -1483,19 +1469,19 @@ async function deleteCategory(id) {
                     inventory[partId].category = 'other';
                 }
             });
-            
+
             await fetch(SCRIPT_URL + '?action=writeInventory', {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify(inventory)
             });
         }
-        
+
         await loadCategories();
         await loadInventory();
         populateDropdowns();
         updateCategoryManager();
-        
+
         showProcessing(false);
         showToast('Category deleted!');
     } catch (error) {
@@ -1508,24 +1494,24 @@ async function deleteCategory(id) {
 function populateCategoryParentDropdown() {
     const select = document.getElementById('newCategoryParent');
     if (!select) return;
-    
+
     select.innerHTML = '<option value="">-- Top Level --</option>';
-    
+
     function addOptions(parentId = null, prefix = '') {
         const sorted = Object.keys(categories)
             .filter(id => categories[id].parent === parentId)
             .sort((a, b) => (categories[a].order || 0) - (categories[b].order || 0));
-        
+
         sorted.forEach(id => {
             const opt = document.createElement('option');
             opt.value = id;
             opt.textContent = prefix + categories[id].name;
             select.appendChild(opt);
-            
+
             addOptions(id, prefix + '  ');
         });
     }
-    
+
     addOptions();
 }
 
@@ -1534,12 +1520,12 @@ function populateCategoryParentDropdown() {
 // ============================================
 function updateTruckManager() {
     if (!hasPermission('manageTrucks')) return;
-    
+
     const container = document.getElementById('truckList');
     if (!container) return;
-    
+
     container.innerHTML = '';
-    
+
     Object.keys(trucks).forEach(truckId => {
         const truck = trucks[truckId];
         const div = document.createElement('div');
@@ -1570,23 +1556,23 @@ async function addTruck() {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const name = document.getElementById('newTruckName').value.trim();
-    
+
     if (!name) {
         showToast('Enter truck name', 'error');
         return;
     }
-    
+
     const id = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-    
+
     if (trucks[id]) {
         showToast('Truck already exists', 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=saveTruck', {
             method: 'POST',
@@ -1597,24 +1583,24 @@ async function addTruck() {
                 active: true
             })
         });
-        
+
         // Add truck column to all inventory
         Object.keys(inventory).forEach(partId => {
             inventory[partId][id] = 0;
         });
-        
+
         await fetch(SCRIPT_URL + '?action=writeInventory', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(inventory)
         });
-        
+
         await loadTrucks();
         await loadInventory();
         populateDropdowns();
         updateTruckManager();
         updateDashboard();
-        
+
         document.getElementById('newTruckName').value = '';
         showProcessing(false);
         showToast('Truck added!');
@@ -1630,13 +1616,13 @@ async function editTruck(truckId) {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const truck = trucks[truckId];
     const newName = prompt('Edit truck name:', truck.name);
     if (!newName || newName === truck.name) return;
-    
+
     showProcessing(true);
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=saveTruck', {
             method: 'POST',
@@ -1647,12 +1633,12 @@ async function editTruck(truckId) {
                 active: truck.active
             })
         });
-        
+
         await loadTrucks();
         updateTruckManager();
         updateDashboard();
         populateDropdowns();
-        
+
         showProcessing(false);
         showToast('Truck updated!');
     } catch (error) {
@@ -1667,9 +1653,9 @@ async function toggleTruckActive(truckId) {
         showToast('No permission', 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     try {
         const truck = trucks[truckId];
         await fetch(SCRIPT_URL + '?action=saveTruck', {
@@ -1681,12 +1667,12 @@ async function toggleTruckActive(truckId) {
                 active: !truck.active
             })
         });
-        
+
         await loadTrucks();
         updateTruckManager();
         updateDashboard();
         populateDropdowns();
-        
+
         showProcessing(false);
         showToast(`Truck ${!truck.active ? 'activated' : 'deactivated'}!`);
     } catch (error) {
@@ -1701,50 +1687,50 @@ async function deleteTruck(truckId) {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const truck = trucks[truckId];
-    
+
     // Check if any user assigned
     const usersOnTruck = Object.values(users).filter(u => u.truck === truckId);
     if (usersOnTruck.length > 0) {
         showToast('Cannot delete truck with assigned users', 'error');
         return;
     }
-    
+
     // Check if has inventory
     const hasInventory = Object.values(inventory).some(p => (p[truckId] || 0) > 0);
     if (hasInventory) {
         if (!confirm(`${truck.name} has parts on it. They will be lost. Continue?`)) return;
     }
-    
+
     if (!confirm(`Delete ${truck.name}?`)) return;
-    
+
     showProcessing(true);
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=deleteTruck', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({ id: truckId })
         });
-        
+
         // Remove from inventory
         Object.keys(inventory).forEach(partId => {
             delete inventory[partId][truckId];
         });
-        
+
         await fetch(SCRIPT_URL + '?action=writeInventory', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(inventory)
         });
-        
+
         await loadTrucks();
         await loadInventory();
         updateTruckManager();
         updateDashboard();
         populateDropdowns();
-        
+
         showProcessing(false);
         showToast('Truck deleted!');
     } catch (error) {
@@ -1760,7 +1746,7 @@ async function deleteTruck(truckId) {
 function updateUserList() {
     const list = document.getElementById('userList');
     if (!list) return;
-    
+
     // Populate truck dropdown
     const truckSelect = document.getElementById('newUserTruck');
     if (truckSelect) {
@@ -1772,16 +1758,16 @@ function updateUserList() {
             truckSelect.appendChild(opt);
         });
     }
-    
+
     list.innerHTML = '';
     Object.keys(users).forEach(pin => {
         const user = users[pin];
         const div = document.createElement('div');
         div.style.cssText = 'padding: 15px; background: white; border-radius: 8px; margin-bottom: 15px;';
-        
+
         const truckName = trucks[user.truck]?.name || user.truck;
         const showPin = (pin === currentUserPin || isOwner);
-        
+
         div.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
                 <div style="flex: 1;">
@@ -1850,7 +1836,7 @@ function updateUserList() {
                 </div>
             ` : ''}
         `;
-        
+
         list.appendChild(div);
     });
 }
@@ -1860,11 +1846,11 @@ async function addUser() {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const name = document.getElementById('newUserName').value.trim();
     const pin = document.getElementById('newUserPin').value.trim();
     const truck = document.getElementById('newUserTruck').value;
-    
+
     if (!name || !pin || !truck) {
         showToast('Fill all fields', 'error');
         return;
@@ -1877,9 +1863,9 @@ async function addUser() {
         showToast('PIN already in use', 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=saveUser', {
             method: 'POST',
@@ -1903,7 +1889,7 @@ async function addUser() {
                 }
             })
         });
-        
+
         // Reload users
         const response = await fetch(SCRIPT_URL + '?action=readUsers');
         const result = await response.json();
@@ -1913,30 +1899,30 @@ async function addUser() {
                 const row = result.data[i];
                 if (row[0]) {
                     users[row[0]] = {
-    name: row[1],
-    truck: row[2],
-    isOwner: (row[3] === 'TRUE' || row[3] === true),
-    permissions: {
-        addParts: (row[4] === 'TRUE' || row[4] === true),
-        editParts: (row[5] === 'TRUE' || row[5] === true),
-        deleteParts: (row[6] === 'TRUE' || row[6] === true),
-        loadTruck: (row[7] === 'TRUE' || row[7] === true),
-        useParts: (row[8] === 'TRUE' || row[8] === true),
-        viewHistory: (row[9] === 'TRUE' || row[9] === true),
-        editHistory: (row[10] === 'TRUE' || row[10] === true),
-        manageUsers: (row[11] === 'TRUE' || row[11] === true),
-        manageCategories: (row[12] === 'TRUE' || row[12] === true),
-        manageTrucks: (row[13] === 'TRUE' || row[13] === true)
-    }
-};
+                        name: row[1],
+                        truck: row[2],
+                        isOwner: (row[3] === 'TRUE' || row[3] === true),
+                        permissions: {
+                            addParts: (row[4] === 'TRUE' || row[4] === true),
+                            editParts: (row[5] === 'TRUE' || row[5] === true),
+                            deleteParts: (row[6] === 'TRUE' || row[6] === true),
+                            loadTruck: (row[7] === 'TRUE' || row[7] === true),
+                            useParts: (row[8] === 'TRUE' || row[8] === true),
+                            viewHistory: (row[9] === 'TRUE' || row[9] === true),
+                            editHistory: (row[10] === 'TRUE' || row[10] === true),
+                            manageUsers: (row[11] === 'TRUE' || row[11] === true),
+                            manageCategories: (row[12] === 'TRUE' || row[12] === true),
+                            manageTrucks: (row[13] === 'TRUE' || row[13] === true)
+                        }
+                    };
                 }
             }
         }
-        
+
         document.getElementById('newUserName').value = '';
         document.getElementById('newUserPin').value = '';
         updateUserList();
-        
+
         showProcessing(false);
         showToast(`${name} added!`);
     } catch (error) {
@@ -1949,14 +1935,14 @@ async function addUser() {
 async function editUserPin(oldPin) {
     const user = users[oldPin];
     const canEdit = (oldPin === currentUserPin || isOwner);
-    
+
     if (!canEdit) {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const newPin = prompt(`Enter new PIN for ${user.name} (4 digits):`, oldPin);
-    
+
     if (!newPin) return;
     if (newPin === oldPin) return;
     if (newPin.length !== 4 || !/^\d+$/.test(newPin)) {
@@ -1967,9 +1953,9 @@ async function editUserPin(oldPin) {
         showToast('PIN already in use', 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     try {
         // Save user with new PIN
         await fetch(SCRIPT_URL + '?action=saveUser', {
@@ -1983,19 +1969,19 @@ async function editUserPin(oldPin) {
                 permissions: user.permissions
             })
         });
-        
+
         // Delete old PIN
         await fetch(SCRIPT_URL + '?action=deleteUser', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({ pin: oldPin })
         });
-        
+
         // Update current user PIN if it was their own
         if (oldPin === currentUserPin) {
             currentUserPin = newPin;
         }
-        
+
         // Reload users
         const response = await fetch(SCRIPT_URL + '?action=readUsers');
         const result = await response.json();
@@ -2007,24 +1993,24 @@ async function editUserPin(oldPin) {
                     users[row[0]] = {
                         name: row[1],
                         truck: row[2],
-                        isOwner: row[3] === 'TRUE',
+                        isOwner: (row[3] === 'TRUE' || row[3] === true),
                         permissions: {
-                            addParts: row[4] === 'TRUE',
-                            editParts: row[5] === 'TRUE',
-                            deleteParts: row[6] === 'TRUE',
-                            loadTruck: row[7] === 'TRUE',
-                            useParts: row[8] === 'TRUE',
-                            viewHistory: row[9] === 'TRUE',
-                            editHistory: row[10] === 'TRUE',
-                            manageUsers: row[11] === 'TRUE',
-                            manageCategories: row[12] === 'TRUE',
-                            manageTrucks: row[13] === 'TRUE'
+                            addParts: (row[4] === 'TRUE' || row[4] === true),
+                            editParts: (row[5] === 'TRUE' || row[5] === true),
+                            deleteParts: (row[6] === 'TRUE' || row[6] === true),
+                            loadTruck: (row[7] === 'TRUE' || row[7] === true),
+                            useParts: (row[8] === 'TRUE' || row[8] === true),
+                            viewHistory: (row[9] === 'TRUE' || row[9] === true),
+                            editHistory: (row[10] === 'TRUE' || row[10] === true),
+                            manageUsers: (row[11] === 'TRUE' || row[11] === true),
+                            manageCategories: (row[12] === 'TRUE' || row[12] === true),
+                            manageTrucks: (row[13] === 'TRUE' || row[13] === true)
                         }
                     };
                 }
             }
         }
-        
+
         updateUserList();
         showProcessing(false);
         showToast('PIN updated!');
@@ -2040,26 +2026,26 @@ async function editUserTruck(pin) {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const user = users[pin];
     const truckOptions = Object.keys(trucks)
         .filter(id => trucks[id].active)
         .map((id, index) => `${index + 1}. ${trucks[id].name}`)
         .join('\n');
-    
+
     const choice = prompt(`Select truck for ${user.name}:\n${truckOptions}\n\nEnter number:`, '1');
     if (!choice) return;
-    
+
     const truckIndex = parseInt(choice) - 1;
     const truckId = Object.keys(trucks).filter(id => trucks[id].active)[truckIndex];
-    
+
     if (!truckId) {
         showToast('Invalid selection', 'error');
         return;
     }
-    
+
     showProcessing(true);
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=saveUser', {
             method: 'POST',
@@ -2072,15 +2058,15 @@ async function editUserTruck(pin) {
                 permissions: user.permissions
             })
         });
-        
+
         users[pin].truck = truckId;
-        
+
         // Update current user truck if it was their own
         if (pin === currentUserPin) {
             userTruck = truckId;
             populateDropdowns();
         }
-        
+
         updateUserList();
         showProcessing(false);
         showToast('Truck updated!');
@@ -2096,12 +2082,12 @@ async function makeManager(pin) {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const user = users[pin];
     if (!confirm(`Give ${user.name} full management permissions?`)) return;
-    
+
     showProcessing(true);
-    
+
     try {
         const newPermissions = {
             addParts: true,
@@ -2115,7 +2101,7 @@ async function makeManager(pin) {
             manageCategories: true,
             manageTrucks: true
         };
-        
+
         await fetch(SCRIPT_URL + '?action=saveUser', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
@@ -2127,9 +2113,9 @@ async function makeManager(pin) {
                 permissions: newPermissions
             })
         });
-        
+
         users[pin].permissions = newPermissions;
-        
+
         updateUserList();
         showProcessing(false);
         showToast(`${user.name} is now a manager!`);
@@ -2145,10 +2131,10 @@ async function togglePermission(pin, permission, value) {
         showToast('No permission', 'error');
         return;
     }
-    
+
     const user = users[pin];
     user.permissions[permission] = value;
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=saveUser', {
             method: 'POST',
@@ -2172,26 +2158,26 @@ async function deleteUser(pin) {
         showToast('No permission', 'error');
         return;
     }
-    
+
     if (pin === currentUserPin) {
         showToast('Cannot delete own account', 'error');
         return;
     }
-    
+
     const user = users[pin];
     if (!confirm(`Delete ${user.name}?`)) return;
-    
+
     showProcessing(true);
-    
+
     try {
         await fetch(SCRIPT_URL + '?action=deleteUser', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({ pin: pin })
         });
-        
+
         delete users[pin];
-        
+
         updateUserList();
         showProcessing(false);
         showToast('User deleted');
@@ -2211,12 +2197,12 @@ async function getLocation() {
             resolve(null);
             return;
         }
-        
+
         navigator.geolocation.getCurrentPosition(
             async (position) => {
                 const lat = position.coords.latitude;
                 const lon = position.coords.longitude;
-                
+
                 try {
                     const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&addressdetails=1`, {
                         headers: {
@@ -2224,36 +2210,36 @@ async function getLocation() {
                         }
                     });
                     const data = await response.json();
-                    
+
                     let address = 'Location captured';
                     if (data && data.address) {
                         const parts = [];
-                        
+
                         if (data.address.house_number) parts.push(data.address.house_number);
                         if (data.address.road) parts.push(data.address.road);
                         else if (data.address.street) parts.push(data.address.street);
-                        
-                        const locality = data.address.city || 
-                                       data.address.town || 
-                                       data.address.village || 
-                                       data.address.hamlet || 
+
+                        const locality = data.address.city ||
+                                       data.address.town ||
+                                       data.address.village ||
+                                       data.address.hamlet ||
                                        data.address.municipality ||
                                        data.address.county;
                         if (locality) parts.push(locality);
-                        
+
                         if (data.address.state) parts.push(data.address.state);
                         if (data.address.postcode) parts.push(data.address.postcode);
-                        
+
                         address = parts.join(', ') || data.display_name || 'Location captured';
                     }
-                    
+
                     resolve({ lat: lat.toFixed(6), lon: lon.toFixed(6), address });
                 } catch (e) {
                     resolve({ lat: lat.toFixed(6), lon: lon.toFixed(6), address: 'Location captured' });
                 }
             },
             () => resolve(null),
-            { 
+            {
                 timeout: 10000,
                 enableHighAccuracy: true,
                 maximumAge: 0
@@ -2294,7 +2280,7 @@ function showToast(message, type = 'success') {
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
     document.body.appendChild(toast);
-    
+
     setTimeout(() => toast.classList.add('show'), 100);
     setTimeout(() => {
         toast.classList.remove('show');
