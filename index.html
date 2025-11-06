@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>HVAC Inventory Manager</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
@@ -45,20 +46,20 @@
                 <button class="logout-btn" id="logoutBtn">🔒 Logout</button>
             </div>
         </div>
-        
+
         <!-- Tabs -->
         <div class="tabs" id="tabContainer"></div>
-        
+
         <!-- Dashboard -->
         <div id="dashboard" class="content active">
             <div id="alerts"></div>
             <div class="stats" id="statsContainer"></div>
-            
+
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;">
                 <h2 style="margin: 0;">Current Inventory</h2>
                 <input type="text" id="searchInventory" placeholder="🔍 Search parts..." style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 1em; max-width: 300px; width: 100%;">
             </div>
-            
+
             <div class="table-container">
                 <table id="inventoryTable">
                     <thead><tr id="inventoryHeader"></tr></thead>
@@ -66,7 +67,7 @@
                 </table>
             </div>
         </div>
-        
+
         <!-- Load Truck -->
         <div id="load-truck" class="content">
             <h2>📦 Load Truck from Shop</h2>
@@ -93,7 +94,7 @@
             </div>
             <button class="btn btn-primary" id="loadTruckBtn">Load Truck</button>
         </div>
-        
+
         <!-- Use Parts -->
         <div id="use-parts" class="content">
             <h2>🔧 Use Parts on Job</h2>
@@ -124,7 +125,7 @@
             </div>
             <button class="btn btn-primary" id="usePartsBtn">Record Usage</button>
         </div>
-        
+
         <!-- Return to Shop -->
         <div id="return-to-shop" class="content">
             <h2>↩️ Return Parts to Shop</h2>
@@ -151,7 +152,7 @@
             </div>
             <button class="btn btn-primary" id="returnToShopBtn">Return to Shop</button>
         </div>
-        
+
         <!-- History -->
         <div id="history" class="content">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
@@ -160,7 +161,7 @@
             </div>
             <div id="historyList"></div>
         </div>
-        
+
         <!-- Quick Load -->
         <div id="quick-load" class="content">
             <h2>🚛 Quick Load - Restock Trucks</h2>
@@ -168,7 +169,7 @@
             <div id="quickLoadList"></div>
             <button class="btn btn-primary" id="quickLoadBtn" style="margin-top: 20px; display: none;">Load Selected Items</button>
         </div>
-        
+
         <!-- Add Part -->
         <div id="add-part" class="content">
             <h2>➕ Add New Part</h2>
@@ -225,13 +226,13 @@
             </div>
             <button class="btn btn-primary" id="addPartBtn">Add Part</button>
         </div>
-        
+
         <!-- Categories -->
         <div id="categories" class="content">
             <div class="admin-section">
                 <h2>📁 Category Management</h2>
                 <p style="color: #666; margin-bottom: 20px;">Organize your parts with categories and subcategories</p>
-                
+
                 <h3>Add New Category</h3>
                 <div class="form-grid">
                     <div class="form-group">
@@ -246,18 +247,18 @@
                     </div>
                 </div>
                 <button class="btn btn-primary" id="addCategoryBtn">Add Category</button>
-                
+
                 <h3 style="margin-top: 30px;">Current Categories</h3>
                 <div id="categoryList" style="margin-top: 15px;"></div>
             </div>
         </div>
-        
+
         <!-- Trucks -->
         <div id="trucks" class="content">
             <div class="admin-section">
                 <h2>🚚 Truck Management</h2>
                 <p style="color: #666; margin-bottom: 20px;">Manage your fleet and assign trucks to users</p>
-                
+
                 <h3>Add New Truck</h3>
                 <div class="form-grid">
                     <div class="form-group">
@@ -266,12 +267,12 @@
                     </div>
                 </div>
                 <button class="btn btn-primary" id="addTruckBtn">Add Truck</button>
-                
+
                 <h3 style="margin-top: 30px;">Current Trucks</h3>
                 <div id="truckList" style="margin-top: 15px;"></div>
             </div>
         </div>
-        
+
         <!-- Settings -->
         <div id="settings" class="content">
             <div class="admin-section">
@@ -279,7 +280,7 @@
                 <h3>Google Sheets Sync</h3>
                 <p>Status: <span style="color: #28a745;">✅ Connected</span></p>
                 <p style="color: #666; font-size: 0.9em;">All data automatically syncs with Google Sheets</p>
-                
+
                 <h3 style="margin-top: 20px;">User Management</h3>
                 <div class="form-grid">
                     <div class="form-group">
@@ -304,6 +305,7 @@
 
 <!-- ZXing Barcode Scanner Library -->
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
+<script src="script.js"></script>
 
 </body>
 </html>
