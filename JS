@@ -89,37 +89,58 @@ function login() {
     
     // Load users from Google Sheets
     fetch(SCRIPT_URL + '?action=readUsers')
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to connect to Google Sheets');
+            }
+            return response.json();
+        })
         .then(result => {
-            if (result.success && result.data) {
-                // Parse users from sheet
-                users = {};
-                for (let i = 1; i < result.data.length; i++) {
-                    const row = result.data[i];
-                    const userPin = (row[0] || '').toString().trim();
-                    if (userPin) {
-                        users[userPin] = {
-                            name: row[1],
-                            truck: row[2],
-                            isOwner: (row[3] === 'TRUE' || row[3] === true),
-                            permissions: {
-                                addParts: (row[4] === 'TRUE' || row[4] === true),
-                                editParts: (row[5] === 'TRUE' || row[5] === true),
-                                deleteParts: (row[6] === 'TRUE' || row[6] === true),
-                                loadTruck: (row[7] === 'TRUE' || row[7] === true),
-                                useParts: (row[8] === 'TRUE' || row[8] === true),
-                                viewHistory: (row[9] === 'TRUE' || row[9] === true),
-                                editHistory: (row[10] === 'TRUE' || row[10] === true),
-                                manageUsers: (row[11] === 'TRUE' || row[11] === true),
-                                manageCategories: (row[12] === 'TRUE' || row[12] === true),
-                                manageTrucks: (row[13] === 'TRUE' || row[13] === true)
-                            }
-                        };
-                    }
-                }
+            console.log('Received user data from Google Sheets:', result);
 
-                console.log('Login attempt - PIN:', pin, 'Available users:', Object.keys(users));
-                const user = users[pin];
+            if (!result.success) {
+                throw new Error('Google Sheets returned error: ' + (result.error || 'Unknown error'));
+            }
+
+            if (!result.data || result.data.length <= 1) {
+                showProcessing(false);
+                showToast('No users found in system. Contact administrator.', 'error');
+                document.getElementById('pinInput').value = '';
+                return;
+            }
+
+            // Parse users from sheet
+            users = {};
+            for (let i = 1; i < result.data.length; i++) {
+                const row = result.data[i];
+                const userPin = (row[0] || '').toString().trim();
+                if (userPin) {
+                    console.log('Loading user - PIN:', userPin, 'Name:', row[1]);
+                    users[userPin] = {
+                        name: row[1],
+                        truck: row[2],
+                        isOwner: (row[3] === 'TRUE' || row[3] === true),
+                        permissions: {
+                            addParts: (row[4] === 'TRUE' || row[4] === true),
+                            editParts: (row[5] === 'TRUE' || row[5] === true),
+                            deleteParts: (row[6] === 'TRUE' || row[6] === true),
+                            loadTruck: (row[7] === 'TRUE' || row[7] === true),
+                            useParts: (row[8] === 'TRUE' || row[8] === true),
+                            viewHistory: (row[9] === 'TRUE' || row[9] === true),
+                            editHistory: (row[10] === 'TRUE' || row[10] === true),
+                            manageUsers: (row[11] === 'TRUE' || row[11] === true),
+                            manageCategories: (row[12] === 'TRUE' || row[12] === true),
+                            manageTrucks: (row[13] === 'TRUE' || row[13] === true)
+                        }
+                    };
+                }
+            }
+
+            console.log('Login attempt - Entered PIN:', pin);
+            console.log('Available PINs in system:', Object.keys(users));
+            console.log('PIN match found:', users[pin] !== undefined);
+
+            const user = users[pin];
 
                 if (user) {
                     // Successful login
@@ -143,13 +164,17 @@ function login() {
                     showProcessing(false);
                     loginAttempts++;
                     localStorage.setItem('loginAttempts', loginAttempts.toString());
-                    
+
+                    console.error('Login failed - PIN not found in user list');
+                    console.error('Entered PIN:', pin, '(length:', pin.length, ')');
+                    console.error('Available PINs:', Object.keys(users));
+
                     if (loginAttempts >= LOCKOUT_TIMES.length) {
                         loginAttempts = LOCKOUT_TIMES.length - 1;
                     }
-                    
+
                     const lockoutTime = LOCKOUT_TIMES[loginAttempts];
-                    
+
                     if (lockoutTime > 0) {
                         lockoutUntil = Date.now() + lockoutTime;
                         localStorage.setItem('lockoutUntil', lockoutUntil.toString());
@@ -157,9 +182,13 @@ function login() {
                         showToast(`Too many attempts. Locked out for ${minutes} minute${minutes !== 1 ? 's' : ''}.`, 'error');
                     } else {
                         const attemptsLeft = 5 - loginAttempts;
-                        showToast(`Invalid PIN. ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining.`, 'error');
+                        if (Object.keys(users).length === 0) {
+                            showToast('No users loaded. Check connection.', 'error');
+                        } else {
+                            showToast(`Invalid PIN. ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining.`, 'error');
+                        }
                     }
-                    
+
                     document.getElementById('pinInput').value = '';
                 }
             }
@@ -167,7 +196,9 @@ function login() {
         .catch(error => {
             showProcessing(false);
             console.error('Login error:', error);
-            showToast('Connection error. Please try again.', 'error');
+            console.error('Error details:', error.message);
+            showToast('Connection error: ' + error.message, 'error');
+            document.getElementById('pinInput').value = '';
         });
 }
 
