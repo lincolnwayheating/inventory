@@ -241,13 +241,6 @@ async function init() {
         showToast('Error loading data. Please refresh.', 'error');
     }
 }
-```
-
-### 6. Quick Test: Verify Your Apps Script Deployment
-
-Open this URL in your browser (replace with your actual script URL):
-```
-https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec?action=readTrucks
 
 async function refreshData() {
     showProcessing(true);
