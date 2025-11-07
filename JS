@@ -142,55 +142,54 @@ function login() {
 
             const user = users[pin];
 
-                if (user) {
-                    // Successful login
-                    loginAttempts = 0;
-                    lockoutUntil = 0;
-                    localStorage.setItem('loginAttempts', '0');
-                    localStorage.setItem('lockoutUntil', '0');
-                    
-                    currentUser = user.name;
-                    currentUserPin = pin;
-                    isOwner = user.isOwner;
-                    userTruck = user.truck;
-                    
-                    document.getElementById('loginScreen').style.display = 'none';
-                    document.getElementById('appContainer').style.display = 'block';
-                    document.getElementById('userBadge').textContent = user.name + (user.isOwner ? ' (Owner)' : '');
-                    
-                    init();
-                } else {
-                    // Failed login
-                    showProcessing(false);
-                    loginAttempts++;
-                    localStorage.setItem('loginAttempts', loginAttempts.toString());
+            if (user) {
+                // Successful login
+                loginAttempts = 0;
+                lockoutUntil = 0;
+                localStorage.setItem('loginAttempts', '0');
+                localStorage.setItem('lockoutUntil', '0');
 
-                    console.error('Login failed - PIN not found in user list');
-                    console.error('Entered PIN:', pin, '(length:', pin.length, ')');
-                    console.error('Available PINs:', Object.keys(users));
+                currentUser = user.name;
+                currentUserPin = pin;
+                isOwner = user.isOwner;
+                userTruck = user.truck;
 
-                    if (loginAttempts >= LOCKOUT_TIMES.length) {
-                        loginAttempts = LOCKOUT_TIMES.length - 1;
-                    }
+                document.getElementById('loginScreen').style.display = 'none';
+                document.getElementById('appContainer').style.display = 'block';
+                document.getElementById('userBadge').textContent = user.name + (user.isOwner ? ' (Owner)' : '');
 
-                    const lockoutTime = LOCKOUT_TIMES[loginAttempts];
+                init();
+            } else {
+                // Failed login
+                showProcessing(false);
+                loginAttempts++;
+                localStorage.setItem('loginAttempts', loginAttempts.toString());
 
-                    if (lockoutTime > 0) {
-                        lockoutUntil = Date.now() + lockoutTime;
-                        localStorage.setItem('lockoutUntil', lockoutUntil.toString());
-                        const minutes = Math.floor(lockoutTime / 60000);
-                        showToast(`Too many attempts. Locked out for ${minutes} minute${minutes !== 1 ? 's' : ''}.`, 'error');
-                    } else {
-                        const attemptsLeft = 5 - loginAttempts;
-                        if (Object.keys(users).length === 0) {
-                            showToast('No users loaded. Check connection.', 'error');
-                        } else {
-                            showToast(`Invalid PIN. ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining.`, 'error');
-                        }
-                    }
+                console.error('Login failed - PIN not found in user list');
+                console.error('Entered PIN:', pin, '(length:', pin.length, ')');
+                console.error('Available PINs:', Object.keys(users));
 
-                    document.getElementById('pinInput').value = '';
+                if (loginAttempts >= LOCKOUT_TIMES.length) {
+                    loginAttempts = LOCKOUT_TIMES.length - 1;
                 }
+
+                const lockoutTime = LOCKOUT_TIMES[loginAttempts];
+
+                if (lockoutTime > 0) {
+                    lockoutUntil = Date.now() + lockoutTime;
+                    localStorage.setItem('lockoutUntil', lockoutUntil.toString());
+                    const minutes = Math.floor(lockoutTime / 60000);
+                    showToast(`Too many attempts. Locked out for ${minutes} minute${minutes !== 1 ? 's' : ''}.`, 'error');
+                } else {
+                    const attemptsLeft = 5 - loginAttempts;
+                    if (Object.keys(users).length === 0) {
+                        showToast('No users loaded. Check connection.', 'error');
+                    } else {
+                        showToast(`Invalid PIN. ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining.`, 'error');
+                    }
+                }
+
+                document.getElementById('pinInput').value = '';
             }
         })
         .catch(error => {
