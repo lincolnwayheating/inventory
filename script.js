@@ -527,6 +527,7 @@ function buildTabs() {
         { id: 'transfer-trucks', label: '🔄 Transfer', permission: 'loadTruck' },
         { id: 'quick-load', label: '🚛 Quick Load', permission: 'loadTruck' },
         { id: 'add-part', label: '➕ New Part', permission: 'addParts' },
+        { id: 'edit-part', label: '✏️ Edit Part', permission: 'editParts' },
         { id: 'categories', label: '📁 Categories', permission: 'manageCategories' },
         { id: 'trucks', label: '🚚 Trucks', permission: 'manageTrucks' },
         { id: 'settings', label: '⚙️ Settings', permission: 'manageUsers' }
@@ -581,9 +582,10 @@ function switchTab(tabName) {
     if (tabName === 'trucks') updateTruckManager();
     if (tabName === 'settings') updateUserList();
     if (tabName === 'quick-load') updateQuickLoadList();
- if (tabName === 'load-truck' || tabName === 'return-to-shop' || tabName === 'use-parts' || tabName === 'transfer-trucks') {
-    populateDropdowns();
-}
+    if (tabName === 'edit-part') populateEditPartDropdown();
+    if (tabName === 'load-truck' || tabName === 'return-to-shop' || tabName === 'use-parts' || tabName === 'transfer-trucks') {
+        populateDropdowns();
+    }
 }
 
 function setupEventListeners() {
@@ -600,6 +602,9 @@ function setupEventListeners() {
     document.getElementById('quickLoadLocation')?.addEventListener('change', updateQuickLoadList);
     document.getElementById('transferBtn')?.addEventListener('click', transferParts);
     document.getElementById('transferFromTruck')?.addEventListener('change', updateTransferPartsList);
+    document.getElementById('editPartSelect')?.addEventListener('change', loadPartForEdit);
+    document.getElementById('savePartBtn')?.addEventListener('click', savePartEdits);
+    document.getElementById('cancelEditBtn')?.addEventListener('click', cancelPartEdit);
     
     const clearHistoryBtn = document.getElementById('clearHistoryBtn');
     if (clearHistoryBtn) {
@@ -2691,4 +2696,123 @@ function showToast(message, type = 'success') {
         toast.classList.remove('show');
         setTimeout(() => document.body.removeChild(toast), 300);
     }, 3000);
+}
+// ============================================
+// EDIT PART MINIMUMS
+// ============================================
+function populateEditPartDropdown() {
+    const select = document.getElementById('editPartSelect');
+    if (!select) return;
+    
+    select.innerHTML = '<option value="">-- Select Part --</option>';
+    
+    const byCategory = {};
+    Object.keys(inventory).forEach(id => {
+        const catId = inventory[id].category || 'other';
+        const catPath = getCategoryPath(catId);
+        if (!byCategory[catPath]) byCategory[catPath] = [];
+        byCategory[catPath].push({id, name: inventory[id].name});
+    });
+    
+    Object.keys(byCategory).sort().forEach(catPath => {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = catPath;
+        
+        byCategory[catPath].sort((a, b) => a.name.localeCompare(b.name));
+        
+        byCategory[catPath].forEach(item => {
+            const opt = document.createElement('option');
+            opt.value = item.id;
+            opt.textContent = item.name;
+            optgroup.appendChild(opt);
+        });
+        select.appendChild(optgroup);
+    });
+}
+
+function loadPartForEdit() {
+    const partId = document.getElementById('editPartSelect').value;
+    const form = document.getElementById('editPartForm');
+    
+    if (!partId) {
+        form.style.display = 'none';
+        return;
+    }
+    
+    const part = inventory[partId];
+    if (!part) return;
+    
+    document.getElementById('editPartName').textContent = part.name;
+    document.getElementById('editMinStock').value = part.minStock || 0;
+    document.getElementById('editMinTruckStock').value = part.minTruckStock || 0;
+    
+    form.style.display = 'block';
+}
+
+async function savePartEdits() {
+    if (!hasPermission('editParts')) {
+        showToast('No permission', 'error');
+        return;
+    }
+    
+    const partId = document.getElementById('editPartSelect').value;
+    const minStock = parseInt(document.getElementById('editMinStock').value);
+    const minTruckStock = parseInt(document.getElementById('editMinTruckStock').value);
+    
+    if (!partId) {
+        showToast('Select a part', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    try {
+        // Update minimums
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartMinimums',
+                partId: partId,
+                minStock: minStock,
+                minTruckStock: minTruckStock
+            })
+        });
+        
+        // Log transaction
+        const part = inventory[partId];
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Edited Part',
+            details: `${part.name}: Updated minimums (Shop: ${minStock}, Truck: ${minTruckStock})`,
+            quantity: 0,
+            from: '',
+            to: '',
+            jobName: '',
+            address: '',
+            lat: '',
+            lon: ''
+        });
+        
+        // Reload inventory
+        await loadInventory();
+        updateDashboard();
+        
+        // Clear form
+        document.getElementById('editPartSelect').value = '';
+        document.getElementById('editPartForm').style.display = 'none';
+        
+        showProcessing(false);
+        showToast('Part minimums updated!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Edit part error:', error);
+        showToast('Error updating part', 'error');
+    }
+}
+
+function cancelPartEdit() {
+    document.getElementById('editPartSelect').value = '';
+    document.getElementById('editPartForm').style.display = 'none';
 }
