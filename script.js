@@ -581,10 +581,9 @@ function switchTab(tabName) {
     if (tabName === 'trucks') updateTruckManager();
     if (tabName === 'settings') updateUserList();
     if (tabName === 'quick-load') updateQuickLoadList();
-    if (tabName === 'load-truck' || tabName === 'return-to-shop' || tabName === 'use-parts' || tabName === 'transfer-trucks') {
-    if (tabName === 'load-truck' || tabName === 'return-to-shop' || tabName === 'use-parts') {
-        populateDropdowns();
-    }
+ if (tabName === 'load-truck' || tabName === 'return-to-shop' || tabName === 'use-parts' || tabName === 'transfer-trucks') {
+    populateDropdowns();
+}
 }
 
 function setupEventListeners() {
