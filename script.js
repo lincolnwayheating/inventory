@@ -209,18 +209,116 @@ async function refreshData() {
     showProcessing(true);
     
     try {
-        // Load data sequentially with delays
-        await loadCategories();
+        // Clear current data to force fresh load
+        inventory = {};
+        categories = {};
+        trucks = {};
+        history = [];
+        
+        // Add cache-busting timestamp to force fresh data
+        const timestamp = Date.now();
+        
+        // Load categories
+        const catResponse = await fetch(SCRIPT_URL + '?action=readCategories&t=' + timestamp);
+        const catResult = await catResponse.json();
+        if (catResult.success && catResult.data) {
+            categories = {};
+            for (let i = 1; i < catResult.data.length; i++) {
+                const row = catResult.data[i];
+                if (row[0]) {
+                    categories[row[0]] = {
+                        name: row[1],
+                        parent: row[2] || null,
+                        order: parseInt(row[3]) || 0
+                    };
+                }
+            }
+        }
+        
         await new Promise(resolve => setTimeout(resolve, 200));
         
-        await loadTrucks();
+        // Load trucks
+        const truckResponse = await fetch(SCRIPT_URL + '?action=readTrucks&t=' + timestamp);
+        const truckResult = await truckResponse.json();
+        if (truckResult.success && truckResult.data) {
+            trucks = {};
+            for (let i = 1; i < truckResult.data.length; i++) {
+                const row = truckResult.data[i];
+                if (row[0]) {
+                    trucks[row[0]] = {
+                        name: row[1],
+                        active: (row[2] === 'TRUE' || row[2] === true)
+                    };
+                }
+            }
+        }
+        
         await new Promise(resolve => setTimeout(resolve, 200));
         
-        await loadInventory();
+        // Load inventory
+        const invResponse = await fetch(SCRIPT_URL + '?action=readInventory&t=' + timestamp);
+        const invResult = await invResponse.json();
+        if (invResult.success && invResult.data && invResult.data.length > 1) {
+            inventory = {};
+            const headers = invResult.data[0];
+            
+            for (let i = 1; i < invResult.data.length; i++) {
+                const row = invResult.data[i];
+                if (row[0]) {
+                    const item = {
+                        name: row[1] || '',
+                        category: row[2] || 'other',
+                        partNumber: row[3] || '',
+                        barcode: row[4] || '',
+                        shop: parseInt(row[5]) || 0
+                    };
+                    
+                    // Dynamic truck columns
+                    let colIndex = 6;
+                    Object.keys(trucks).forEach(truckId => {
+                        item[truckId] = parseInt(row[colIndex]) || 0;
+                        colIndex++;
+                    });
+                    
+                    item.minStock = parseInt(row[colIndex]) || 0;
+                    item.minTruckStock = parseInt(row[colIndex + 1]) || 0;
+                    item.price = parseFloat(row[colIndex + 2]) || 0;
+                    item.purchaseLink = row[colIndex + 3] || '';
+                    item.season = row[colIndex + 4] || 'year-round';
+                    
+                    inventory[row[0]] = item;
+                }
+            }
+        }
+        
         await new Promise(resolve => setTimeout(resolve, 200));
         
-        await loadHistory();
+        // Load history
+        const histResponse = await fetch(SCRIPT_URL + '?action=readHistory&t=' + timestamp);
+        const histResult = await histResponse.json();
+        if (histResult.success && histResult.data && histResult.data.length > 1) {
+            history = [];
+            for (let i = 1; i < histResult.data.length; i++) {
+                const row = histResult.data[i];
+                history.push({
+                    id: i,
+                    timestamp: row[0],
+                    tech: row[1],
+                    action: row[2],
+                    details: row[3],
+                    quantity: row[4],
+                    from: row[5],
+                    to: row[6],
+                    jobName: row[7],
+                    address: row[8],
+                    lat: row[9],
+                    lon: row[10]
+                });
+            }
+            history.reverse();
+        }
         
+        // Update all UI elements
         populateDropdowns();
         updateDashboard();
         
@@ -236,7 +334,7 @@ async function refreshData() {
         }
         
         showProcessing(false);
-        showToast('Data refreshed!');
+        showToast('Data refreshed from Google Sheets!');
     } catch (error) {
         showProcessing(false);
         console.error('Refresh error:', error);
