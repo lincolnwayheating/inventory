@@ -596,6 +596,7 @@ function setupEventListeners() {
     document.getElementById('addCategoryBtn')?.addEventListener('click', addCategory);
     document.getElementById('addTruckBtn')?.addEventListener('click', addTruck);
     document.getElementById('quickLoadBtn')?.addEventListener('click', processQuickLoad);
+    document.getElementById('quickLoadLocation')?.addEventListener('change', updateQuickLoadList);
     
     const clearHistoryBtn = document.getElementById('clearHistoryBtn');
     if (clearHistoryBtn) {
@@ -1000,8 +1001,17 @@ async function useParts() {
 async function updateQuickLoadList() {
     const container = document.getElementById('quickLoadList');
     const btn = document.getElementById('quickLoadBtn');
+    const locationSelect = document.getElementById('quickLoadLocation');
     
     if (!container) return;
+    
+    const selectedLocation = locationSelect?.value;
+    
+    if (!selectedLocation) {
+        container.innerHTML = '<p style="color: #666;">Select a location to see items that need restocking</p>';
+        btn.style.display = 'none';
+        return;
+    }
     
     showProcessing(true);
     
@@ -1009,112 +1019,174 @@ async function updateQuickLoadList() {
         const response = await fetch(SCRIPT_URL + '?action=getLowStockItems');
         const result = await response.json();
         
-        if (result.success && result.items && result.items.length > 0) {
-            container.innerHTML = '';
-            
-            result.items.forEach((item, index) => {
-                const div = document.createElement('div');
-                div.className = 'quick-load-item';
-                
-                let needsText = '';
-                Object.keys(item.needed).forEach(truckId => {
-                    const truckName = trucks[truckId]?.name || truckId;
-                    needsText += `${truckName} needs: ${item.needed[truckId]} | `;
-                });
-                needsText += `Shop has: ${item.shopQty}`;
-                
-                div.innerHTML = `
-                    <input type="checkbox" class="quick-load-checkbox" data-part-id="${item.id}" data-index="${index}">
-                    <div style="flex: 1;">
-                        <strong>${item.name}</strong>
-                        <br><small style="color: #666;">${needsText}</small>
-                    </div>
-                `;
-                
-                // Store the needed quantities
-                div.dataset.needed = JSON.stringify(item.needed);
-                
-                container.appendChild(div);
-            });
-            
-            btn.style.display = 'block';
-        } else {
-            container.innerHTML = '<p style="color: #28a745;">✅ All trucks are fully stocked!</p>';
+        if (!result.success || !result.data) {
+            container.innerHTML = '<p style="color: #e74c3c;">Error loading data</p>';
             btn.style.display = 'none';
+            showProcessing(false);
+            return;
         }
         
+        let items = [];
+        let locationName = '';
+        
+        // Get items based on selected location
+        if (selectedLocation === 'shop') {
+            items = result.data.shop;
+            locationName = 'Shop';
+        } else {
+            items = result.data.trucks[selectedLocation] || [];
+            locationName = trucks[selectedLocation]?.name || selectedLocation;
+        }
+        
+        if (items.length === 0) {
+            container.innerHTML = `<p style="color: #28a745;">✅ ${locationName} is fully stocked!</p>`;
+            btn.style.display = 'none';
+            showProcessing(false);
+            return;
+        }
+        
+        // Build the list with editable quantities
+        container.innerHTML = '';
+        
+        items.forEach((item, index) => {
+            const div = document.createElement('div');
+            div.className = 'quick-load-item';
+            div.style.display = 'grid';
+            div.style.gridTemplateColumns = 'auto 1fr auto auto';
+            div.style.gap = '15px';
+            div.style.alignItems = 'center';
+            
+            div.innerHTML = `
+                <input type="checkbox" class="quick-load-checkbox" data-part-id="${item.id}" data-index="${index}" checked>
+                <div>
+                    <strong>${item.name}</strong>
+                    <br><small style="color: #666;">
+                        Current: ${item.current} | Minimum: ${item.minimum} | 
+                        ${selectedLocation === 'shop' ? 'Need' : 'Available in shop'}: ${selectedLocation === 'shop' ? item.needed : item.shopQty}
+                    </small>
+                </div>
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label style="margin: 0; font-weight: 600;">Qty:</label>
+                    <input type="number" 
+                           class="quick-load-qty" 
+                           data-part-id="${item.id}"
+                           value="${item.needed}" 
+                           min="1" 
+                           max="${selectedLocation === 'shop' ? 9999 : item.shopQty}"
+                           style="width: 70px; padding: 8px; border: 2px solid #e0e0e0; border-radius: 5px; font-size: 1em;">
+                </div>
+            `;
+            
+            container.appendChild(div);
+        });
+        
+        btn.style.display = 'block';
         showProcessing(false);
+        
     } catch (error) {
         showProcessing(false);
         console.error('Quick load error:', error);
         container.innerHTML = '<p style="color: #e74c3c;">Error loading data</p>';
+        btn.style.display = 'none';
     }
 }
-
 async function processQuickLoad() {
     const checkboxes = document.querySelectorAll('.quick-load-checkbox:checked');
+    const locationSelect = document.getElementById('quickLoadLocation');
+    const selectedLocation = locationSelect?.value;
     
     if (checkboxes.length === 0) {
         showToast('Select at least one item', 'error');
         return;
     }
     
+    if (!selectedLocation) {
+        showToast('Select a location', 'error');
+        return;
+    }
+    
     showProcessing(true);
     
-    // ✅ Reload inventory first
+    // Reload inventory first
     await loadInventory();
     
     try {
         const updates = [];
+        const isShop = (selectedLocation === 'shop');
         
         for (const checkbox of checkboxes) {
             const partId = checkbox.getAttribute('data-part-id');
-            const item = checkbox.closest('.quick-load-item');
-            const needed = JSON.parse(item.dataset.needed);
+            const qtyInput = document.querySelector(`.quick-load-qty[data-part-id="${partId}"]`);
+            const qty = parseInt(qtyInput?.value) || 0;
+            
+            if (qty <= 0) continue;
             
             const part = inventory[partId];
+            if (!part) continue;
             
-            // Build updates object for all trucks
-            const partUpdates = { shop: part.shop };
-            
-            Object.keys(needed).forEach(truckId => {
-                const qty = needed[truckId];
-                if (part.shop >= qty) {
-                    partUpdates.shop -= qty;
-                    partUpdates[truckId] = part[truckId] + qty;
-                    
-                    updates.push({
-                        partName: part.name,
-                        truck: truckId,
-                        qty: qty
-                    });
+            if (isShop) {
+                // Restocking shop (from suppliers/ordering)
+                const partUpdates = {
+                    shop: part.shop + qty
+                };
+                
+                await fetch(SCRIPT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({
+                        action: 'updatePartQuantity',
+                        partId: partId,
+                        updates: partUpdates
+                    })
+                });
+                
+                updates.push({
+                    partName: part.name,
+                    location: 'Shop',
+                    qty: qty
+                });
+                
+            } else {
+                // Restocking truck from shop
+                if (part.shop < qty) {
+                    showToast(`Only ${part.shop} of ${part.name} available in shop`, 'error');
+                    continue;
                 }
-            });
-            
-            // ✅ Update this part's quantities
-            await fetch(SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify({
-                    action: 'updatePartQuantity',
-                    partId: partId,
-                    updates: partUpdates
-                })
-            });
+                
+                const partUpdates = {
+                    shop: part.shop - qty,
+                    [selectedLocation]: part[selectedLocation] + qty
+                };
+                
+                await fetch(SCRIPT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({
+                        action: 'updatePartQuantity',
+                        partId: partId,
+                        updates: partUpdates
+                    })
+                });
+                
+                updates.push({
+                    partName: part.name,
+                    location: trucks[selectedLocation]?.name || selectedLocation,
+                    qty: qty
+                });
+            }
         }
         
         // Log transactions
         const location = await getLocation();
         for (const update of updates) {
-            const truckName = trucks[update.truck]?.name || update.truck;
             await addTransaction({
                 timestamp: new Date().toLocaleString(),
                 tech: currentUser,
-                action: 'Quick Load',
-                details: `${update.partName}: ${update.qty} loaded onto ${truckName}`,
+                action: isShop ? 'Restocked Shop' : 'Quick Load',
+                details: `${update.partName}: ${update.qty} ${isShop ? 'added to' : 'loaded onto'} ${update.location}`,
                 quantity: update.qty,
-                from: 'Shop',
-                to: truckName,
+                from: isShop ? 'Supplier' : 'Shop',
+                to: update.location,
                 jobName: '',
                 address: location ? location.address : '',
                 lat: location ? location.lat : '',
@@ -1122,20 +1194,19 @@ async function processQuickLoad() {
             });
         }
         
-        // ✅ Reload from Google Sheets
+        // Reload from Google Sheets
         await loadInventory();
         updateDashboard();
         await updateQuickLoadList();
         
         showProcessing(false);
-        showToast(`${updates.length} item${updates.length !== 1 ? 's' : ''} loaded!`);
+        showToast(`${updates.length} item${updates.length !== 1 ? 's' : ''} restocked!`);
     } catch (error) {
         showProcessing(false);
         console.error('Quick load error:', error);
         showToast('Error processing quick load', 'error');
     }
 }
-
 // ============================================
 // DROPDOWNS & LISTS
 // ============================================
@@ -1226,7 +1297,7 @@ function populateDropdowns() {
         updateReturnPartsList();
     }
     
-    // Use Parts screen
+   // Use Parts screen
     const usePartsTruck = document.getElementById('usePartsTruck');
     if (usePartsTruck) {
         usePartsTruck.innerHTML = '';
@@ -1241,7 +1312,25 @@ function populateDropdowns() {
         }
         updateUsePartsList();
     }
-}
+    
+    // ✅ ADD THIS SECTION HERE (before the closing brace)
+    // Populate Quick Load location dropdown
+    const quickLoadLocation = document.getElementById('quickLoadLocation');
+    if (quickLoadLocation) {
+        // Clear existing options except the first two (placeholder and shop)
+        while (quickLoadLocation.options.length > 2) {
+            quickLoadLocation.remove(2);
+        }
+        
+        // Add trucks
+        Object.keys(trucks).filter(id => trucks[id].active).forEach(id => {
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.textContent = `🚚 ${trucks[id].name} (from shop)`;
+            quickLoadLocation.appendChild(opt);
+        });
+    }
+}  // ← CLOSING BRACE STAYS HERE
 
 function updateReturnPartsList() {
     const truck = document.getElementById('returnTruck')?.value;
