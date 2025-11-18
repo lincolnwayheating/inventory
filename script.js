@@ -560,16 +560,17 @@ async function addPart() {
     const id = name.toLowerCase().replace(/[^a-z0-9]/g, '') + Date.now();
     
     const newPart = {
-        name, 
+        id: id,
+        name: name, 
         category: categoryId, 
-        partNumber, 
-        barcode, 
-        price, 
+        partNumber: partNumber, 
+        barcode: barcode, 
+        price: price, 
         purchaseLink: link, 
-        season,
+        season: season,
         shop: shopQty,
-        minStock, 
-        minTruckStock
+        minStock: minStock, 
+        minTruckStock: minTruckStock
     };
     
     // Initialize all truck quantities to 0
@@ -577,14 +578,15 @@ async function addPart() {
         newPart[truckId] = 0;
     });
     
-    inventory[id] = newPart;
-    
     try {
-        // Save to Google Sheets
-        await fetch(SCRIPT_URL + '?action=writeInventory', {
+        // ✅ Add part to Google Sheets (doesn't overwrite)
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(inventory)
+            body: JSON.stringify({
+                action: 'addPart',
+                part: newPart
+            })
         });
         
         // Log transaction
@@ -602,6 +604,7 @@ async function addPart() {
             lon: ''
         });
         
+        // ✅ Reload from Google Sheets
         await loadInventory();
         
         // Clear form
@@ -638,22 +641,30 @@ async function loadTruck() {
         return;
     }
     
+    // ✅ Reload inventory first
+    showProcessing(true);
+    await loadInventory();
+    
     const part = inventory[partId];
     if (part.shop < qty) {
+        showProcessing(false);
         showToast(`Only ${part.shop} available in shop`, 'error');
         return;
     }
     
-    showProcessing(true);
-    
-    part.shop -= qty;
-    part[truck] += qty;
-    
     try {
-        await fetch(SCRIPT_URL + '?action=writeInventory', {
+        // ✅ Update only the specific quantities
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(inventory)
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    shop: part.shop - qty,
+                    [truck]: part[truck] + qty
+                }
+            })
         });
         
         const location = await getLocation();
@@ -673,6 +684,7 @@ async function loadTruck() {
             lon: location ? location.lon : ''
         });
         
+        // ✅ Reload from Google Sheets
         await loadInventory();
         
         // Clear form
@@ -705,22 +717,30 @@ async function returnToShop() {
         return;
     }
     
+    // ✅ Reload inventory first
+    showProcessing(true);
+    await loadInventory();
+    
     const part = inventory[partId];
     if (part[truck] < qty) {
+        showProcessing(false);
         showToast(`Only ${part[truck]} available on truck`, 'error');
         return;
     }
     
-    showProcessing(true);
-    
-    part[truck] -= qty;
-    part.shop += qty;
-    
     try {
-        await fetch(SCRIPT_URL + '?action=writeInventory', {
+        // ✅ Update only the specific quantities
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(inventory)
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    [truck]: part[truck] - qty,
+                    shop: part.shop + qty
+                }
+            })
         });
         
         const location = await getLocation();
@@ -740,6 +760,7 @@ async function returnToShop() {
             lon: location ? location.lon : ''
         });
         
+        // ✅ Reload from Google Sheets
         await loadInventory();
         
         // Clear form
@@ -774,21 +795,29 @@ async function useParts() {
         return;
     }
     
+    // ✅ Reload inventory first
+    showProcessing(true);
+    await loadInventory();
+    
     const part = inventory[partId];
     if (part[truck] < qty) {
+        showProcessing(false);
         showToast(`Only ${part[truck]} available on truck`, 'error');
         return;
     }
     
-    showProcessing(true);
-    
-    part[truck] -= qty;
-    
     try {
-        await fetch(SCRIPT_URL + '?action=writeInventory', {
+        // ✅ Update only the specific quantity
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(inventory)
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    [truck]: part[truck] - qty
+                }
+            })
         });
         
         const location = await getLocation();
@@ -808,6 +837,7 @@ async function useParts() {
             lon: location ? location.lon : ''
         });
         
+        // ✅ Reload from Google Sheets
         await loadInventory();
         
         // Clear form
@@ -894,22 +924,27 @@ async function processQuickLoad() {
     
     showProcessing(true);
     
+    // ✅ Reload inventory first
+    await loadInventory();
+    
     try {
         const updates = [];
         
-        checkboxes.forEach(checkbox => {
+        for (const checkbox of checkboxes) {
             const partId = checkbox.getAttribute('data-part-id');
             const item = checkbox.closest('.quick-load-item');
             const needed = JSON.parse(item.dataset.needed);
             
             const part = inventory[partId];
             
-            // Load each truck with what it needs
+            // Build updates object for all trucks
+            const partUpdates = { shop: part.shop };
+            
             Object.keys(needed).forEach(truckId => {
                 const qty = needed[truckId];
                 if (part.shop >= qty) {
-                    part.shop -= qty;
-                    part[truckId] += qty;
+                    partUpdates.shop -= qty;
+                    partUpdates[truckId] = part[truckId] + qty;
                     
                     updates.push({
                         partName: part.name,
@@ -918,14 +953,18 @@ async function processQuickLoad() {
                     });
                 }
             });
-        });
-        
-        // Save inventory
-        await fetch(SCRIPT_URL + '?action=writeInventory', {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(inventory)
-        });
+            
+            // ✅ Update this part's quantities
+            await fetch(SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                    action: 'updatePartQuantity',
+                    partId: partId,
+                    updates: partUpdates
+                })
+            });
+        }
         
         // Log transactions
         const location = await getLocation();
@@ -946,6 +985,7 @@ async function processQuickLoad() {
             });
         }
         
+        // ✅ Reload from Google Sheets
         await loadInventory();
         updateDashboard();
         await updateQuickLoadList();
@@ -1197,7 +1237,8 @@ function renderInventoryTable(filteredInventory = null) {
             `;
             
             Object.keys(trucks).filter(id => trucks[id].active).forEach(truckId => {
-                rowHTML += `<td>${p[truckId] || 0}</td>`;});
+                rowHTML += `<td>${p[truckId] || 0}</td>`;
+            });
             
             rowHTML += `
                 <td>${p.minStock}</td>
@@ -1371,10 +1412,11 @@ async function addCategory() {
     const maxOrder = Math.max(0, ...Object.values(categories).map(c => c.order || 0));
     
     try {
-        await fetch(SCRIPT_URL + '?action=saveCategory', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
+                action: 'saveCategory',
                 id: id,
                 name: name,
                 parent: parent,
@@ -1411,10 +1453,11 @@ async function editCategory(id) {
     showProcessing(true);
     
     try {
-        await fetch(SCRIPT_URL + '?action=saveCategory', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
+                action: 'saveCategory',
                 id: id,
                 name: newName,
                 parent: cat.parent,
@@ -1455,26 +1498,14 @@ async function deleteCategory(id) {
     showProcessing(true);
     
     try {
-        await fetch(SCRIPT_URL + '?action=deleteCategory', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({ id: id })
+            body: JSON.stringify({ 
+                action: 'deleteCategory',
+                id: id 
+            })
         });
-        
-        // Update parts if needed
-        if (partsInCategory > 0) {
-            Object.keys(inventory).forEach(partId => {
-                if (inventory[partId].category === id) {
-                    inventory[partId].category = 'other';
-                }
-            });
-            
-            await fetch(SCRIPT_URL + '?action=writeInventory', {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify(inventory)
-            });
-        }
         
         await loadCategories();
         await loadInventory();
@@ -1573,25 +1604,15 @@ async function addTruck() {
     showProcessing(true);
     
     try {
-        await fetch(SCRIPT_URL + '?action=saveTruck', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
+                action: 'saveTruck',
                 id: id,
                 name: name,
                 active: true
             })
-        });
-        
-        // Add truck column to all inventory
-        Object.keys(inventory).forEach(partId => {
-            inventory[partId][id] = 0;
-        });
-        
-        await fetch(SCRIPT_URL + '?action=writeInventory', {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(inventory)
         });
         
         await loadTrucks();
@@ -1623,10 +1644,11 @@ async function editTruck(truckId) {
     showProcessing(true);
     
     try {
-        await fetch(SCRIPT_URL + '?action=saveTruck', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
+                action: 'saveTruck',
                 id: truckId,
                 name: newName,
                 active: truck.active
@@ -1657,10 +1679,11 @@ async function toggleTruckActive(truckId) {
     
     try {
         const truck = trucks[truckId];
-        await fetch(SCRIPT_URL + '?action=saveTruck', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
+                action: 'saveTruck',
                 id: truckId,
                 name: truck.name,
                 active: !truck.active
@@ -1707,21 +1730,13 @@ async function deleteTruck(truckId) {
     showProcessing(true);
     
     try {
-        await fetch(SCRIPT_URL + '?action=deleteTruck', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({ id: truckId })
-        });
-        
-        // Remove from inventory
-        Object.keys(inventory).forEach(partId => {
-            delete inventory[partId][truckId];
-        });
-        
-        await fetch(SCRIPT_URL + '?action=writeInventory', {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(inventory)
+            body: JSON.stringify({ 
+                action: 'deleteTruck',
+                id: truckId 
+            })
         });
         
         await loadTrucks();
@@ -1866,10 +1881,11 @@ async function addUser() {
     showProcessing(true);
     
     try {
-        await fetch(SCRIPT_URL + '?action=saveUser', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
+                action: 'saveUser',
                 pin: pin,
                 name: name,
                 truck: truck,
@@ -1957,10 +1973,11 @@ async function editUserPin(oldPin) {
     
     try {
         // Save user with new PIN
-        await fetch(SCRIPT_URL + '?action=saveUser', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
+                action: 'saveUser',
                 pin: newPin,
                 name: user.name,
                 truck: user.truck,
@@ -1970,10 +1987,13 @@ async function editUserPin(oldPin) {
         });
         
         // Delete old PIN
-        await fetch(SCRIPT_URL + '?action=deleteUser', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({ pin: oldPin })
+            body: JSON.stringify({ 
+                action: 'deleteUser',
+                pin: oldPin 
+            })
         });
         
         // Update current user PIN if it was their own
@@ -2046,10 +2066,11 @@ async function editUserTruck(pin) {
     showProcessing(true);
     
     try {
-        await fetch(SCRIPT_URL + '?action=saveUser', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
+                action: 'saveUser',
                 pin: pin,
                 name: user.name,
                 truck: truckId,
@@ -2101,10 +2122,11 @@ async function makeManager(pin) {
             manageTrucks: true
         };
         
-        await fetch(SCRIPT_URL + '?action=saveUser', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
+                action: 'saveUser',
                 pin: pin,
                 name: user.name,
                 truck: user.truck,
@@ -2135,10 +2157,11 @@ async function togglePermission(pin, permission, value) {
     user.permissions[permission] = value;
     
     try {
-        await fetch(SCRIPT_URL + '?action=saveUser', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
+                action: 'saveUser',
                 pin: pin,
                 name: user.name,
                 truck: user.truck,
@@ -2169,10 +2192,13 @@ async function deleteUser(pin) {
     showProcessing(true);
     
     try {
-        await fetch(SCRIPT_URL + '?action=deleteUser', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({ pin: pin })
+            body: JSON.stringify({ 
+                action: 'deleteUser',
+                pin: pin 
+            })
         });
         
         delete users[pin];
@@ -2252,10 +2278,13 @@ async function getLocation() {
 // ============================================
 async function addTransaction(transaction) {
     try {
-        await fetch(SCRIPT_URL + '?action=addTransaction', {
+        await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(transaction)
+            body: JSON.stringify({
+                action: 'addTransaction',
+                transaction: transaction
+            })
         });
     } catch (error) {
         console.error('Transaction log error:', error);
