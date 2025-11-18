@@ -163,12 +163,21 @@
         </div>
         
         <!-- Quick Load -->
-        <div id="quick-load" class="content">
-            <h2>🚛 Quick Load - Restock Trucks</h2>
-            <p style="color: #666; margin-bottom: 20px;">Select parts below minimum truck stock to load</p>
-            <div id="quickLoadList"></div>
-            <button class="btn btn-primary" id="quickLoadBtn" style="margin-top: 20px; display: none;">Load Selected Items</button>
-        </div>
+<div id="quick-load" class="content">
+    <h2>🚛 Quick Restock</h2>
+    <p style="color: #666; margin-bottom: 20px;">Quickly restock items below minimum levels</p>
+    
+    <div class="form-group" style="max-width: 300px; margin-bottom: 20px;">
+        <label>Select Location to Restock *</label>
+        <select id="quickLoadLocation">
+            <option value="">-- Select Location --</option>
+            <option value="shop">🏪 Shop (from suppliers)</option>
+        </select>
+    </div>
+    
+    <div id="quickLoadList"></div>
+    <button class="btn btn-primary" id="quickLoadBtn" style="margin-top: 20px; display: none;">Restock Selected Items</button>
+</div>
         
         <!-- Add Part -->
         <div id="add-part" class="content">
