@@ -382,5 +382,25 @@
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 <script src="script.js?v=4"></script>
 
+<!-- Category Picker Modal -->
+<div class="category-modal" id="categoryModal">
+    <div class="category-modal-content">
+        <div class="category-modal-header">
+            <h2 id="categoryModalTitle">Select Category</h2>
+            <button class="category-close" id="closeCategoryModal">✕</button>
+        </div>
+        <div class="category-breadcrumb" id="categoryBreadcrumb"></div>
+        <div class="category-grid" id="categoryGrid"></div>
+        <div class="category-modal-footer">
+            <button class="btn btn-secondary" id="categoryBackBtn" style="display: none;">← Back</button>
+            <button class="btn btn-secondary" id="categoryCancelBtn">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- ZXing Barcode Scanner Library -->
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
+<script src="script.js?v=5"></script>
+
 </body>
 </html>
