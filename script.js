@@ -655,7 +655,11 @@ async function addPart() {
     
     showProcessing(true);
     
-    const id = name.toLowerCase().replace(/[^a-z0-9]/g, '') + Date.now();
+// ✅ Use Part Number as ID if provided, otherwise generate simple readable ID
+let id = partNumber;
+if (!id || id.trim() === '') {
+    id = name.toUpperCase().replace(/[^A-Z0-9]/g, '-').substring(0, 20);
+}
     
     const newPart = {
         id: id,
