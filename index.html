@@ -212,7 +212,7 @@
             <button class="btn btn-primary" id="quickLoadBtn" style="margin-top: 20px; display: none;">Restock Selected Items</button>
         </div>
         
-        <!-- Add Part -->
+<!-- Add Part -->
         <div id="add-part" class="content">
             <h2>➕ Add New Part</h2>
             <div class="form-grid">
@@ -267,6 +267,39 @@
                 </div>
             </div>
             <button class="btn btn-primary" id="addPartBtn">Add Part</button>
+        </div>
+        
+        <!-- Edit Part -->
+        <div id="edit-part" class="content">
+            <h2>✏️ Edit Part Minimums</h2>
+            <p style="color: #666; margin-bottom: 20px;">Update minimum stock levels for parts</p>
+            
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Select Part *</label>
+                    <select id="editPartSelect">
+                        <option value="">-- Select Part --</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div id="editPartForm" style="display: none; margin-top: 20px;">
+                <h3 id="editPartName" style="color: #667eea; margin-bottom: 20px;"></h3>
+                
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Min Shop Stock *</label>
+                        <input type="number" id="editMinStock" min="0" inputmode="numeric">
+                    </div>
+                    <div class="form-group">
+                        <label>Min Truck Stock *</label>
+                        <input type="number" id="editMinTruckStock" min="0" inputmode="numeric">
+                    </div>
+                </div>
+                
+                <button class="btn btn-primary" id="savePartBtn">Save Changes</button>
+                <button class="btn btn-secondary" id="cancelEditBtn" style="margin-left: 10px;">Cancel</button>
+            </div>
         </div>
         
         <!-- Categories -->
