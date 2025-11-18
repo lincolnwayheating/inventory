@@ -425,7 +425,8 @@ async function loadInventory() {
                     category: row[2] || 'other',
                     partNumber: row[3] || '',
                     barcode: row[4] || '',
-                    shop: parseInt(row[5]) || 0
+                    imageUrl: row[5] || '',
+                    shop: parseInt(row[6]) || 0
                 };
                 
                 // Match truck columns by header name
@@ -695,6 +696,7 @@ async function addPart() {
     const categoryId = document.getElementById('partCategory').value;
     const partNumber = document.getElementById('partNumber').value.trim();
     const barcode = document.getElementById('partBarcode').value.trim();
+    const imageUrl = document.getElementById('partImageUrl').value.trim();
     const price = parseFloat(document.getElementById('partPrice').value) || 0;
     const link = document.getElementById('partLink').value.trim();
     const season = document.getElementById('partSeason').value;
@@ -721,6 +723,7 @@ async function addPart() {
         category: categoryId, 
         partNumber: partNumber, 
         barcode: barcode, 
+        imageUrl: imageUrl, 
         price: price, 
         purchaseLink: link, 
         season: season,
@@ -767,6 +770,7 @@ async function addPart() {
         document.getElementById('partName').value = '';
         document.getElementById('partNumber').value = '';
         document.getElementById('partBarcode').value = '';
+        document.getElementById('partImageUrl').value = '';
         document.getElementById('partPrice').value = '';
         document.getElementById('partLink').value = '';
         document.getElementById('shopQty').value = '0';
@@ -1469,7 +1473,7 @@ function renderInventoryTable(filteredInventory = null) {
     const header = document.getElementById('inventoryHeader');
     if (!tbody || !header) return;
     
-    let headerHTML = '<th>Part</th><th>Category</th><th>Part #</th><th>Shop</th>';
+    let headerHTML = '<th>Image</th><th>Part</th><th>Category</th><th>Part #</th><th>Shop</th>';
     Object.keys(trucks).filter(id => trucks[id].active).forEach(truckId => {
         headerHTML += `<th>${trucks[truckId].name}</th>`;
     });
@@ -1494,8 +1498,16 @@ function renderInventoryTable(filteredInventory = null) {
         byCategory[catPath].forEach(p => {
             const row = tbody.insertRow();
             if (p.shop < p.minStock) row.classList.add('low-stock');
+
+          let imageHTML = '';
+            if (p.imageUrl) {
+                imageHTML = `<img src="${p.imageUrl}" class="part-thumbnail" alt="${p.name}" onerror="this.style.display='none'">`;
+            } else {
+                imageHTML = '<div class="no-image-placeholder">📦</div>';
+            }
             
             let rowHTML = `
+                <td>${imageHTML}</td>
                 <td><strong>${p.name}</strong></td>
                 <td>${catPath}</td>
                 <td>${p.partNumber}</td>
@@ -2814,7 +2826,7 @@ function renderCategoryGrid() {
         grid.appendChild(card);
     });
     
-    // Render parts
+// Render parts
     partsInCategory.forEach(partId => {
         const part = inventory[partId];
         const card = document.createElement('div');
@@ -2829,7 +2841,14 @@ function renderCategoryGrid() {
             qtyInfo = ` (${part[fromTruck]} available)`;
         }
         
+        // ADD IMAGE
+        let imageHTML = '';
+        if (part.imageUrl) {
+            imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}" onerror="this.style.display='none'">`;
+        }
+        
         card.innerHTML = `
+            ${imageHTML}
             <div class="part-card-name">✓ ${part.name}</div>
             <div class="part-card-details">
                 ${part.partNumber ? `Part #: ${part.partNumber}` : ''}
