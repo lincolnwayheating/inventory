@@ -160,6 +160,36 @@
                 <button class="btn btn-danger" id="clearHistoryBtn" style="padding: 10px 20px; display: none;">🗑️ Clear All History</button>
             </div>
             <div id="historyList"></div>
+  <div id="transfer-trucks" class="content">
+            <h2>🔄 Transfer Between Trucks</h2>
+            <p style="color: #666; margin-bottom: 20px;">Move parts from one truck to another</p>
+            
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>From Truck *</label>
+                    <select id="transferFromTruck"></select>
+                </div>
+                <div class="form-group">
+                    <label>To Truck *</label>
+                    <select id="transferToTruck"></select>
+                </div>
+                <div class="form-group">
+                    <label>Scan/Select Part *</label>
+                    <div class="barcode-input">
+                        <input type="text" id="transferBarcode" placeholder="Scan...">
+                        <button class="barcode-btn" data-barcode="transferBarcode">📷</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Or Select</label>
+                    <select id="transferPart"></select>
+                </div>
+                <div class="form-group">
+                    <label>Quantity *</label>
+                    <input type="number" id="transferQty" value="1" min="1" inputmode="numeric">
+                </div>
+            </div>
+            <button class="btn btn-primary" id="transferBtn">Transfer Parts</button>
         </div>
         
         <!-- Quick Load -->
