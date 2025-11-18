@@ -774,6 +774,7 @@ async function addPart() {
         document.getElementById('partPrice').value = '';
         document.getElementById('partLink').value = '';
         document.getElementById('shopQty').value = '0';
+        clearImageUpload();
         
         populateDropdowns();
         updateDashboard();
@@ -2977,3 +2978,85 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
+
+// ============================================
+// IMAGE UPLOAD FUNCTIONALITY
+// ============================================
+
+let uploadedImageUrl = '';
+
+// Setup image upload (add to existing DOMContentLoaded or create new one)
+document.addEventListener('DOMContentLoaded', function() {
+    const uploadImageBtn = document.getElementById('uploadImageBtn');
+    const partImageFile = document.getElementById('partImageFile');
+    
+    if (uploadImageBtn && partImageFile) {
+        uploadImageBtn.addEventListener('click', function() {
+            partImageFile.click();
+        });
+        
+        partImageFile.addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            // Check file size (max 5MB)
+            if (file.size > 5 * 1024 * 1024) {
+                showToast('Image too large. Please use an image under 5MB.', 'error');
+                return;
+            }
+            
+            showProcessing(true);
+            
+            try {
+                // Read file as base64
+                const reader = new FileReader();
+                reader.onload = async function(event) {
+                    const base64Data = event.target.result;
+                    
+                    // Show preview
+                    document.getElementById('imagePreviewImg').src = base64Data;
+                    document.getElementById('imagePreview').style.display = 'block';
+                    
+                    // Upload to Google Drive
+                    const timestamp = Date.now();
+                    const fileName = `part_${timestamp}.jpg`;
+                    
+                    const response = await fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain' },
+                        body: JSON.stringify({
+                            action: 'uploadImage',
+                            imageData: base64Data,
+                            fileName: fileName
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        uploadedImageUrl = result.imageUrl;
+                        document.getElementById('partImageUrl').value = result.imageUrl;
+                        showProcessing(false);
+                        showToast('Image uploaded successfully!');
+                    } else {
+                        showProcessing(false);
+                        showToast('Error uploading image: ' + result.error, 'error');
+                    }
+                };
+                
+                reader.readAsDataURL(file);
+            } catch (error) {
+                showProcessing(false);
+                console.error('Upload error:', error);
+                showToast('Error uploading image', 'error');
+            }
+        });
+    }
+});
+
+function clearImageUpload() {
+    document.getElementById('partImageFile').value = '';
+    document.getElementById('partImageUrl').value = '';
+    document.getElementById('imagePreview').style.display = 'none';
+    uploadedImageUrl = '';
+}
