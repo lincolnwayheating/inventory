@@ -1124,7 +1124,9 @@ function updateTransferPartsList() {
         });
         select.appendChild(optgroup);
     });
-}  
+    
+    makeSelectSearchable('transferPart');
+}
 
 // ============================================
 // QUICK LOAD FEATURE
@@ -1396,6 +1398,9 @@ function populateDropdowns() {
             });
             loadPart.appendChild(optgroup);
         });
+        
+        // Make searchable
+        makeSelectSearchable('loadPart');
     }
     
     const loadTruck = document.getElementById('loadTruck');
@@ -1428,7 +1433,7 @@ function populateDropdowns() {
         updateReturnPartsList();
     }
     
-   // Use Parts screen
+    // Use Parts screen
     const usePartsTruck = document.getElementById('usePartsTruck');
     if (usePartsTruck) {
         usePartsTruck.innerHTML = '';
@@ -1444,7 +1449,6 @@ function populateDropdowns() {
         updateUsePartsList();
     }
     
-    // ✅ ADD THIS SECTION HERE (before the closing brace)
     // Populate Quick Load location dropdown
     const quickLoadLocation = document.getElementById('quickLoadLocation');
     if (quickLoadLocation) {
@@ -1461,6 +1465,7 @@ function populateDropdowns() {
             quickLoadLocation.appendChild(opt);
         });
     }
+    
     const transferFromTruck = document.getElementById('transferFromTruck');
     if (transferFromTruck) {
         transferFromTruck.innerHTML = '';
@@ -1486,7 +1491,68 @@ function populateDropdowns() {
             transferToTruck.appendChild(opt);
         });
     }
-}  // ← CLOSING BRACE STAYS HERE
+}
+
+// Make select dropdown searchable
+function makeSelectSearchable(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    
+    // Create wrapper
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position: relative; width: 100%;';
+    select.parentNode.insertBefore(wrapper, select);
+    
+    // Create search input
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = '🔍 Type to search...';
+    searchInput.style.cssText = 'width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 1em; margin-bottom: 10px;';
+    
+    // Move select into wrapper
+    wrapper.appendChild(searchInput);
+    wrapper.appendChild(select);
+    
+    // Store original options
+    const allOptions = Array.from(select.querySelectorAll('option, optgroup'));
+    
+    // Search functionality
+    searchInput.addEventListener('input', function() {
+        const searchTerm = this.value.toLowerCase();
+        
+        if (!searchTerm) {
+            // Show all options
+            select.innerHTML = '';
+            allOptions.forEach(el => select.appendChild(el.cloneNode(true)));
+            return;
+        }
+        
+        // Filter options
+        select.innerHTML = '<option value="">-- Select Part --</option>';
+        
+        allOptions.forEach(el => {
+            if (el.tagName === 'OPTGROUP') {
+                const optgroup = el.cloneNode(false);
+                let hasMatches = false;
+                
+                Array.from(el.children).forEach(opt => {
+                    if (opt.textContent.toLowerCase().includes(searchTerm)) {
+                        optgroup.appendChild(opt.cloneNode(true));
+                        hasMatches = true;
+                    }
+                });
+                
+                if (hasMatches) {
+                    select.appendChild(optgroup);
+                }
+            } else if (el.tagName === 'OPTION' && el.value) {
+                if (el.textContent.toLowerCase().includes(searchTerm)) {
+                    select.appendChild(el.cloneNode(true));
+                }
+            }
+        });
+    });
+}
 
 function updateReturnPartsList() {
     const truck = document.getElementById('returnTruck')?.value;
@@ -1520,6 +1586,8 @@ function updateReturnPartsList() {
         });
         select.appendChild(optgroup);
     });
+    
+    makeSelectSearchable('returnPart');
 }
 
 function updateUsePartsList() {
@@ -1554,6 +1622,8 @@ function updateUsePartsList() {
         });
         select.appendChild(optgroup);
     });
+    
+    makeSelectSearchable('usePartsPart');
 }
 
 // ============================================
@@ -1781,7 +1851,7 @@ async function addCategory() {
     }
     
     const name = document.getElementById('newCategoryName').value.trim();
-    const parent = document.getElementById('newCategoryParent').value || null;
+    const parentId = document.getElementById('newCategoryParent').value || null;
     
     if (!name) {
         showToast('Enter category name', 'error');
@@ -1790,7 +1860,12 @@ async function addCategory() {
     
     showProcessing(true);
     
-    const id = name.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now();
+    // Get parent name if parent exists
+    let parentName = '';
+    if (parentId && categories[parentId]) {
+        parentName = categories[parentId].name;
+    }
+    
     const maxOrder = Math.max(0, ...Object.values(categories).map(c => c.order || 0));
     
     try {
@@ -1799,9 +1874,8 @@ async function addCategory() {
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
                 action: 'saveCategory',
-                id: id,
                 name: name,
-                parent: parent,
+                parentName: parentName,
                 order: maxOrder + 1
             })
         });
