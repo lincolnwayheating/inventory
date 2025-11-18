@@ -274,11 +274,20 @@
                         <button class="barcode-btn" data-barcode="partBarcode">📷</button>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>Image URL</label>
-                    <input type="url" id="partImageUrl" placeholder="https://...">
-                    <small style="color: #666; font-size: 0.85em;">Paste link from Google Drive, Imgur, etc.</small>
-                </div>                <div class="form-group">
+               <div class="form-group">
+                    <label>Part Image</label>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <input type="file" id="partImageFile" accept="image/*" capture="environment" style="display: none;">
+                        <button type="button" class="btn btn-secondary" id="uploadImageBtn" style="width: 100%;">
+                            📷 Take/Upload Photo
+                        </button>
+                        <input type="url" id="partImageUrl" placeholder="Or paste image URL" style="font-size: 0.9em;">
+                        <div id="imagePreview" style="display: none; margin-top: 10px;">
+                            <img id="imagePreviewImg" style="max-width: 100%; max-height: 200px; border-radius: 8px; border: 2px solid #e0e0e0;">
+                            <button type="button" onclick="clearImageUpload()" style="margin-top: 5px; padding: 5px 10px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer;">Remove Image</button>
+                        </div>
+                    </div>
+                </div>
                     <label>Price</label>
                     <input type="number" id="partPrice" step="0.01" placeholder="0.00" inputmode="decimal">
                 </div>
