@@ -256,54 +256,54 @@ async function refreshData() {
         await new Promise(resolve => setTimeout(resolve, 200));
         
         // Load inventory
-const invResponse = await fetch(SCRIPT_URL + '?action=readInventory&t=' + timestamp);
-const invResult = await invResponse.json();
-if (invResult.success && invResult.data && invResult.data.length > 1) {
-    inventory = {};
-    const headers = invResult.data[0];
-    
-    for (let i = 1; i < invResult.data.length; i++) {
-        const row = invResult.data[i];
-        if (row[0]) {
-            const item = {
-                name: row[1] || '',
-                category: row[2] || 'other',
-                partNumber: row[3] || '',
-                barcode: row[4] || '',
-                shop: parseInt(row[5]) || 0
-            };
+        const invResponse = await fetch(SCRIPT_URL + '?action=readInventory&t=' + timestamp);
+        const invResult = await invResponse.json();
+        if (invResult.success && invResult.data && invResult.data.length > 1) {
+            inventory = {};
+            const headers = invResult.data[0];
             
-            // ✅ FIXED: Match truck columns by header name
-            Object.keys(trucks).forEach(truckId => {
-                const colIndex = headers.indexOf(truckId);
-                if (colIndex !== -1) {
-                    item[truckId] = parseInt(row[colIndex]) || 0;
-                } else {
-                    item[truckId] = 0;
+            for (let i = 1; i < invResult.data.length; i++) {
+                const row = invResult.data[i];
+                if (row[0]) {
+                    const item = {
+                        name: row[1] || '',
+                        category: row[2] || 'other',
+                        partNumber: row[3] || '',
+                        barcode: row[4] || '',
+                        shop: parseInt(row[5]) || 0
+                    };
+                    
+                    // Match truck columns by header name
+                    Object.keys(trucks).forEach(truckId => {
+                        const colIndex = headers.indexOf(truckId);
+                        if (colIndex !== -1) {
+                            item[truckId] = parseInt(row[colIndex]) || 0;
+                        } else {
+                            item[truckId] = 0;
+                        }
+                    });
+                    
+                    // Find where MinStock column starts
+                    const minStockIndex = headers.indexOf('MinStock');
+                    
+                    if (minStockIndex !== -1) {
+                        item.minStock = parseInt(row[minStockIndex]) || 0;
+                        item.minTruckStock = parseInt(row[minStockIndex + 1]) || 0;
+                        item.price = parseFloat(row[minStockIndex + 2]) || 0;
+                        item.purchaseLink = row[minStockIndex + 3] || '';
+                        item.season = row[minStockIndex + 4] || 'year-round';
+                    } else {
+                        item.minStock = 0;
+                        item.minTruckStock = 0;
+                        item.price = 0;
+                        item.purchaseLink = '';
+                        item.season = 'year-round';
+                    }
+                    
+                    inventory[row[0]] = item;
                 }
-            });
-            
-            // Find where MinStock column starts
-            const minStockIndex = headers.indexOf('MinStock');
-            
-            if (minStockIndex !== -1) {
-                item.minStock = parseInt(row[minStockIndex]) || 0;
-                item.minTruckStock = parseInt(row[minStockIndex + 1]) || 0;
-                item.price = parseFloat(row[minStockIndex + 2]) || 0;
-                item.purchaseLink = row[minStockIndex + 3] || '';
-                item.season = row[minStockIndex + 4] || 'year-round';
-            } else {
-                item.minStock = 0;
-                item.minTruckStock = 0;
-                item.price = 0;
-                item.purchaseLink = '';
-                item.season = 'year-round';
             }
-            
-            inventory[row[0]] = item;
         }
-    }
-}
         
         await new Promise(resolve => setTimeout(resolve, 200));
         
@@ -417,8 +417,6 @@ async function loadInventory() {
         inventory = {};
         const headers = result.data[0];
         
-        console.log('📋 Inventory Headers:', headers);
-        
         for (let i = 1; i < result.data.length; i++) {
             const row = result.data[i];
             if (row[0]) {
@@ -430,18 +428,17 @@ async function loadInventory() {
                     shop: parseInt(row[5]) || 0
                 };
                 
-                // ✅ FIXED: Match truck columns by header name, not by iteration order
+                // Match truck columns by header name
                 Object.keys(trucks).forEach(truckId => {
                     const colIndex = headers.indexOf(truckId);
                     if (colIndex !== -1) {
                         item[truckId] = parseInt(row[colIndex]) || 0;
                     } else {
-                        console.warn(`Truck column not found: ${truckId}`);
                         item[truckId] = 0;
                     }
                 });
                 
-                // Find where MinStock column starts (after all truck columns)
+                // Find where MinStock column starts
                 const minStockIndex = headers.indexOf('MinStock');
                 
                 if (minStockIndex !== -1) {
@@ -451,7 +448,6 @@ async function loadInventory() {
                     item.purchaseLink = row[minStockIndex + 3] || '';
                     item.season = row[minStockIndex + 4] || 'year-round';
                 } else {
-                    // Fallback if headers don't match
                     item.minStock = 0;
                     item.minTruckStock = 0;
                     item.price = 0;
@@ -459,15 +455,12 @@ async function loadInventory() {
                     item.season = 'year-round';
                 }
                 
-                console.log(`📦 Loaded part: ${item.name}`, item);
-                
                 inventory[row[0]] = item;
             }
         }
-        
-        console.log('✅ Total parts loaded:', Object.keys(inventory).length);
     }
 }
+
 async function loadHistory() {
     const response = await fetch(SCRIPT_URL + '?action=readHistory');
     const result = await response.json();
@@ -491,7 +484,6 @@ async function loadHistory() {
                 lon: row[10]
             });
         }
-        // Reverse so newest first
         history.reverse();
     }
 }
@@ -664,10 +656,26 @@ function lookupBarcode(context, code) {
     const partId = Object.keys(inventory).find(id => inventory[id].barcode === code);
     
     if (partId) {
-        if (context === 'load') document.getElementById('loadPart').value = partId;
-        if (context === 'return') document.getElementById('returnPart').value = partId;
-        if (context === 'use') document.getElementById('usePartsPart').value = partId;
-        if (context === 'transfer') document.getElementById('transferPart').value = partId;
+        if (context === 'load') {
+            document.getElementById('loadPart').value = partId;
+            document.getElementById('loadPartName').textContent = inventory[partId].name;
+            document.getElementById('loadPartDisplay').style.display = 'block';
+        }
+        if (context === 'return') {
+            document.getElementById('returnPart').value = partId;
+            document.getElementById('returnPartName').textContent = inventory[partId].name;
+            document.getElementById('returnPartDisplay').style.display = 'block';
+        }
+        if (context === 'use') {
+            document.getElementById('usePartsPart').value = partId;
+            document.getElementById('usePartName').textContent = inventory[partId].name;
+            document.getElementById('usePartDisplay').style.display = 'block';
+        }
+        if (context === 'transfer') {
+            document.getElementById('transferPart').value = partId;
+            document.getElementById('transferPartName').textContent = inventory[partId].name;
+            document.getElementById('transferPartDisplay').style.display = 'block';
+        }
         showToast(`Found: ${inventory[partId].name}`);
     } else {
         showToast('Barcode not found', 'error');
@@ -701,11 +709,11 @@ async function addPart() {
     
     showProcessing(true);
     
-// ✅ Use Part Number as ID if provided, otherwise generate simple readable ID
-let id = partNumber;
-if (!id || id.trim() === '') {
-    id = name.toUpperCase().replace(/[^A-Z0-9]/g, '-').substring(0, 20);
-}
+    // Use Part Number as ID if provided, otherwise generate simple readable ID
+    let id = partNumber;
+    if (!id || id.trim() === '') {
+        id = name.toUpperCase().replace(/[^A-Z0-9]/g, '-').substring(0, 20);
+    }
     
     const newPart = {
         id: id,
@@ -727,7 +735,7 @@ if (!id || id.trim() === '') {
     });
     
     try {
-        // ✅ Add part to Google Sheets (doesn't overwrite)
+        // Add part to Google Sheets
         await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
@@ -752,7 +760,7 @@ if (!id || id.trim() === '') {
             lon: ''
         });
         
-        // ✅ Reload from Google Sheets
+        // Reload from Google Sheets
         await loadInventory();
         
         // Clear form
@@ -789,7 +797,7 @@ async function loadTruck() {
         return;
     }
     
-    // ✅ Reload inventory first
+    // Reload inventory first
     showProcessing(true);
     await loadInventory();
     
@@ -801,7 +809,7 @@ async function loadTruck() {
     }
     
     try {
-        // ✅ Update only the specific quantities
+        // Update only the specific quantities
         await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
@@ -832,13 +840,13 @@ async function loadTruck() {
             lon: location ? location.lon : ''
         });
         
-        // ✅ Reload from Google Sheets
+        // Reload from Google Sheets
         await loadInventory();
         
         // Clear form
         document.getElementById('loadBarcode').value = '';
         document.getElementById('loadQty').value = '1';
-        document.getElementById('loadPart').value = '';
+        clearLoadPart();
         
         updateDashboard();
         showProcessing(false);
@@ -865,7 +873,7 @@ async function returnToShop() {
         return;
     }
     
-    // ✅ Reload inventory first
+    // Reload inventory first
     showProcessing(true);
     await loadInventory();
     
@@ -877,7 +885,7 @@ async function returnToShop() {
     }
     
     try {
-        // ✅ Update only the specific quantities
+        // Update only the specific quantities
         await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
@@ -908,14 +916,13 @@ async function returnToShop() {
             lon: location ? location.lon : ''
         });
         
-        // ✅ Reload from Google Sheets
+        // Reload from Google Sheets
         await loadInventory();
         
         // Clear form
         document.getElementById('returnBarcode').value = '';
         document.getElementById('returnQty').value = '1';
-        document.getElementById('returnPart').value = '';
-        updateReturnPartsList();
+        clearReturnPart();
         
         updateDashboard();
         showProcessing(false);
@@ -943,7 +950,7 @@ async function useParts() {
         return;
     }
     
-    // ✅ Reload inventory first
+    // Reload inventory first
     showProcessing(true);
     await loadInventory();
     
@@ -955,7 +962,7 @@ async function useParts() {
     }
     
     try {
-        // ✅ Update only the specific quantity
+        // Update only the specific quantity
         await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
@@ -985,15 +992,14 @@ async function useParts() {
             lon: location ? location.lon : ''
         });
         
-        // ✅ Reload from Google Sheets
+        // Reload from Google Sheets
         await loadInventory();
         
         // Clear form
         document.getElementById('usePartsBarcode').value = '';
         document.getElementById('jobName').value = '';
         document.getElementById('usePartsQty').value = '1';
-        document.getElementById('usePartsPart').value = '';
-        updateUsePartsList();
+        clearUsePart();
         
         updateDashboard();
         showProcessing(false);
@@ -1005,7 +1011,7 @@ async function useParts() {
     }
 }
 
-  // ============================================
+// ============================================
 // TRUCK-TO-TRUCK TRANSFER
 // ============================================
 async function transferParts() {
@@ -1029,7 +1035,7 @@ async function transferParts() {
         return;
     }
     
-    // ✅ Reload inventory first
+    // Reload inventory first
     showProcessing(true);
     await loadInventory();
     
@@ -1041,7 +1047,7 @@ async function transferParts() {
     }
     
     try {
-        // ✅ Update quantities
+        // Update quantities
         await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
@@ -1073,14 +1079,13 @@ async function transferParts() {
             lon: location ? location.lon : ''
         });
         
-        // ✅ Reload from Google Sheets
+        // Reload from Google Sheets
         await loadInventory();
         
         // Clear form
         document.getElementById('transferBarcode').value = '';
         document.getElementById('transferQty').value = '1';
-        document.getElementById('transferPart').value = '';
-        updateTransferPartsList();
+        clearTransferPart();
         
         updateDashboard();
         showProcessing(false);
@@ -1093,39 +1098,7 @@ async function transferParts() {
 }
 
 function updateTransferPartsList() {
-    const fromTruck = document.getElementById('transferFromTruck')?.value;
-    const select = document.getElementById('transferPart');
-    if (!select || !fromTruck) return;
-    
-    select.innerHTML = '<option value="">-- Select Part --</option>';
-    
-    const byCategory = {};
-    Object.keys(inventory).forEach(id => {
-        const part = inventory[id];
-        if (part[fromTruck] > 0) {
-            const catPath = getCategoryPath(part.category);
-            if (!byCategory[catPath]) byCategory[catPath] = [];
-            byCategory[catPath].push({id, name: part.name, qty: part[fromTruck]});
-        }
-    });
-    
-    Object.keys(byCategory).sort().forEach(catPath => {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = catPath;
-        
-        // Sort alphabetically
-        byCategory[catPath].sort((a, b) => a.name.localeCompare(b.name));
-        
-        byCategory[catPath].forEach(item => {
-            const opt = document.createElement('option');
-            opt.value = item.id;
-            opt.textContent = `${item.name} (${item.qty})`;
-            optgroup.appendChild(opt);
-        });
-        select.appendChild(optgroup);
-    });
-    
-    makeSelectSearchable('transferPart');
+    // No longer needed - modal handles this
 }
 
 // ============================================
@@ -1223,6 +1196,7 @@ async function updateQuickLoadList() {
         btn.style.display = 'none';
     }
 }
+
 async function processQuickLoad() {
     const checkboxes = document.querySelectorAll('.quick-load-checkbox:checked');
     const locationSelect = document.getElementById('quickLoadLocation');
@@ -1340,6 +1314,7 @@ async function processQuickLoad() {
         showToast('Error processing quick load', 'error');
     }
 }
+
 // ============================================
 // DROPDOWNS & LISTS
 // ============================================
@@ -1370,39 +1345,6 @@ function populateCategoryDropdown(selectId) {
 function populateDropdowns() {
     populateCategoryDropdown('partCategory');
     
-    // Load Truck screen
-    const loadPart = document.getElementById('loadPart');
-    if (loadPart) {
-        loadPart.innerHTML = '<option value="">-- Select Part --</option>';
-        
-        const byCategory = {};
-        Object.keys(inventory).forEach(id => {
-            const catId = inventory[id].category || 'other';
-            const catPath = getCategoryPath(catId);
-            if (!byCategory[catPath]) byCategory[catPath] = [];
-            byCategory[catPath].push({id, name: inventory[id].name});
-        });
-        
-        Object.keys(byCategory).sort().forEach(catPath => {
-            const optgroup = document.createElement('optgroup');
-            optgroup.label = catPath;
-            
-            // Sort parts alphabetically within category
-            byCategory[catPath].sort((a, b) => a.name.localeCompare(b.name));
-            
-            byCategory[catPath].forEach(item => {
-                const opt = document.createElement('option');
-                opt.value = item.id;
-                opt.textContent = item.name;
-                optgroup.appendChild(opt);
-            });
-            loadPart.appendChild(optgroup);
-        });
-        
-        // Make searchable
-        makeSelectSearchable('loadPart');
-    }
-    
     const loadTruck = document.getElementById('loadTruck');
     if (loadTruck) {
         loadTruck.innerHTML = '';
@@ -1430,7 +1372,6 @@ function populateDropdowns() {
         if (userTruck && trucks[userTruck]) {
             returnTruck.value = userTruck;
         }
-        updateReturnPartsList();
     }
     
     // Use Parts screen
@@ -1446,7 +1387,6 @@ function populateDropdowns() {
         if (userTruck && trucks[userTruck]) {
             usePartsTruck.value = userTruck;
         }
-        updateUsePartsList();
     }
     
     // Populate Quick Load location dropdown
@@ -1478,7 +1418,6 @@ function populateDropdowns() {
         if (userTruck && trucks[userTruck]) {
             transferFromTruck.value = userTruck;
         }
-        updateTransferPartsList();
     }
     
     const transferToTruck = document.getElementById('transferToTruck');
@@ -1493,137 +1432,12 @@ function populateDropdowns() {
     }
 }
 
-// Make select dropdown searchable
-function makeSelectSearchable(selectId) {
-    const select = document.getElementById(selectId);
-    if (!select) return;
-    
-    // Create wrapper
-    const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position: relative; width: 100%;';
-    select.parentNode.insertBefore(wrapper, select);
-    
-    // Create search input
-    const searchInput = document.createElement('input');
-    searchInput.type = 'text';
-    searchInput.placeholder = '🔍 Type to search...';
-    searchInput.style.cssText = 'width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 1em; margin-bottom: 10px;';
-    
-    // Move select into wrapper
-    wrapper.appendChild(searchInput);
-    wrapper.appendChild(select);
-    
-    // Store original options
-    const allOptions = Array.from(select.querySelectorAll('option, optgroup'));
-    
-    // Search functionality
-    searchInput.addEventListener('input', function() {
-        const searchTerm = this.value.toLowerCase();
-        
-        if (!searchTerm) {
-            // Show all options
-            select.innerHTML = '';
-            allOptions.forEach(el => select.appendChild(el.cloneNode(true)));
-            return;
-        }
-        
-        // Filter options
-        select.innerHTML = '<option value="">-- Select Part --</option>';
-        
-        allOptions.forEach(el => {
-            if (el.tagName === 'OPTGROUP') {
-                const optgroup = el.cloneNode(false);
-                let hasMatches = false;
-                
-                Array.from(el.children).forEach(opt => {
-                    if (opt.textContent.toLowerCase().includes(searchTerm)) {
-                        optgroup.appendChild(opt.cloneNode(true));
-                        hasMatches = true;
-                    }
-                });
-                
-                if (hasMatches) {
-                    select.appendChild(optgroup);
-                }
-            } else if (el.tagName === 'OPTION' && el.value) {
-                if (el.textContent.toLowerCase().includes(searchTerm)) {
-                    select.appendChild(el.cloneNode(true));
-                }
-            }
-        });
-    });
-}
-
 function updateReturnPartsList() {
-    const truck = document.getElementById('returnTruck')?.value;
-    const select = document.getElementById('returnPart');
-    if (!select || !truck) return;
-    
-    select.innerHTML = '<option value="">-- Select Part --</option>';
-    
-    const byCategory = {};
-    Object.keys(inventory).forEach(id => {
-        const part = inventory[id];
-        if (part[truck] > 0) {
-            const catPath = getCategoryPath(part.category);
-            if (!byCategory[catPath]) byCategory[catPath] = [];
-            byCategory[catPath].push({id, name: part.name, qty: part[truck]});
-        }
-    });
-    
-    Object.keys(byCategory).sort().forEach(catPath => {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = catPath;
-        
-        // Sort alphabetically
-        byCategory[catPath].sort((a, b) => a.name.localeCompare(b.name));
-        
-        byCategory[catPath].forEach(item => {
-            const opt = document.createElement('option');
-            opt.value = item.id;
-            opt.textContent = `${item.name} (${item.qty})`;
-            optgroup.appendChild(opt);
-        });
-        select.appendChild(optgroup);
-    });
-    
-    makeSelectSearchable('returnPart');
+    // No longer needed - modal handles this
 }
 
 function updateUsePartsList() {
-    const truck = document.getElementById('usePartsTruck')?.value;
-    const select = document.getElementById('usePartsPart');
-    if (!select || !truck) return;
-    
-    select.innerHTML = '<option value="">-- Select Part --</option>';
-    
-    const byCategory = {};
-    Object.keys(inventory).forEach(id => {
-        const part = inventory[id];
-        if (part[truck] > 0) {
-            const catPath = getCategoryPath(part.category);
-            if (!byCategory[catPath]) byCategory[catPath] = [];
-            byCategory[catPath].push({id, name: part.name, qty: part[truck]});
-        }
-    });
-    
-    Object.keys(byCategory).sort().forEach(catPath => {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = catPath;
-        
-        // Sort alphabetically
-        byCategory[catPath].sort((a, b) => a.name.localeCompare(b.name));
-        
-        byCategory[catPath].forEach(item => {
-            const opt = document.createElement('option');
-            opt.value = item.id;
-            opt.textContent = `${item.name} (${item.qty})`;
-            optgroup.appendChild(opt);
-        });
-        select.appendChild(optgroup);
-    });
-    
-    makeSelectSearchable('usePartsPart');
+    // No longer needed - modal handles this
 }
 
 // ============================================
@@ -1908,15 +1722,20 @@ async function editCategory(id) {
     
     showProcessing(true);
     
+    // Get parent name
+    let parentName = '';
+    if (cat.parent && categories[cat.parent]) {
+        parentName = categories[cat.parent].name;
+    }
+    
     try {
         await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
                 action: 'saveCategory',
-                id: id,
                 name: newName,
-                parent: cat.parent,
+                parentName: parentName,
                 order: cat.order
             })
         });
@@ -1953,13 +1772,15 @@ async function deleteCategory(id) {
     
     showProcessing(true);
     
+    const cat = categories[id];
+    
     try {
         await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({ 
                 action: 'deleteCategory',
-                id: id 
+                name: cat.name
             })
         });
         
@@ -2771,6 +2592,7 @@ function showToast(message, type = 'success') {
         setTimeout(() => document.body.removeChild(toast), 300);
     }, 3000);
 }
+
 // ============================================
 // EDIT PART MINIMUMS
 // ============================================
@@ -2890,3 +2712,249 @@ function cancelPartEdit() {
     document.getElementById('editPartSelect').value = '';
     document.getElementById('editPartForm').style.display = 'none';
 }
+
+// ============================================
+// CATEGORY MODAL NAVIGATION
+// ============================================
+
+let currentCategoryPath = [];
+let categoryModalCallback = null;
+let categoryModalContext = null;
+
+function openCategoryModal(context, callback) {
+    categoryModalContext = context;
+    categoryModalCallback = callback;
+    currentCategoryPath = [];
+    
+    const modal = document.getElementById('categoryModal');
+    modal.classList.add('show');
+    
+    renderCategoryGrid();
+}
+
+function closeCategoryModal() {
+    const modal = document.getElementById('categoryModal');
+    modal.classList.remove('show');
+    currentCategoryPath = [];
+    categoryModalCallback = null;
+    categoryModalContext = null;
+}
+
+function renderCategoryGrid() {
+    const grid = document.getElementById('categoryGrid');
+    const breadcrumb = document.getElementById('categoryBreadcrumb');
+    const backBtn = document.getElementById('categoryBackBtn');
+    const title = document.getElementById('categoryModalTitle');
+    
+    // Update breadcrumb
+    if (currentCategoryPath.length === 0) {
+        breadcrumb.style.display = 'none';
+        backBtn.style.display = 'none';
+        title.textContent = 'Select Category';
+    } else {
+        breadcrumb.style.display = 'block';
+        backBtn.style.display = 'block';
+        const pathNames = currentCategoryPath.map(id => categories[id]?.name || id);
+        breadcrumb.innerHTML = '📁 ' + pathNames.join(' <span>›</span> ');
+        title.textContent = 'Select Part or Subcategory';
+    }
+    
+    grid.innerHTML = '';
+    
+    // Get current parent ID
+    const currentParent = currentCategoryPath.length > 0 ? currentCategoryPath[currentCategoryPath.length - 1] : null;
+    
+    // Get subcategories
+    const subcategories = Object.keys(categories).filter(id => {
+        const cat = categories[id];
+        return cat.parent === currentParent;
+    }).sort((a, b) => {
+        return (categories[a].order || 0) - (categories[b].order || 0);
+    });
+    
+    // Get parts in current category
+    let partsInCategory = [];
+    if (currentParent) {
+        partsInCategory = Object.keys(inventory).filter(id => {
+            const part = inventory[id];
+            
+            // Apply context filter
+            if (categoryModalContext === 'return' || categoryModalContext === 'use') {
+                const truck = document.getElementById(categoryModalContext === 'return' ? 'returnTruck' : 'usePartsTruck')?.value;
+                return part.category === currentParent && truck && part[truck] > 0;
+            } else if (categoryModalContext === 'transfer') {
+                const fromTruck = document.getElementById('transferFromTruck')?.value;
+                return part.category === currentParent && fromTruck && part[fromTruck] > 0;
+            } else {
+                return part.category === currentParent;
+            }
+        }).sort((a, b) => inventory[a].name.localeCompare(inventory[b].name));
+    }
+    
+    // Render subcategories
+    subcategories.forEach(catId => {
+        const cat = categories[catId];
+        const card = document.createElement('div');
+        card.className = 'category-card';
+        
+        // Count items in this category (including subcategories)
+        const itemCount = countItemsInCategory(catId);
+        
+        card.innerHTML = `
+            <div class="category-card-icon">📁</div>
+            <div class="category-card-name">${cat.name}</div>
+            <div class="category-card-count">${itemCount} item${itemCount !== 1 ? 's' : ''}</div>
+        `;
+        
+        card.onclick = () => {
+            currentCategoryPath.push(catId);
+            renderCategoryGrid();
+        };
+        
+        grid.appendChild(card);
+    });
+    
+    // Render parts
+    partsInCategory.forEach(partId => {
+        const part = inventory[partId];
+        const card = document.createElement('div');
+        card.className = 'part-card';
+        
+        let qtyInfo = '';
+        if (categoryModalContext === 'return' || categoryModalContext === 'use') {
+            const truck = document.getElementById(categoryModalContext === 'return' ? 'returnTruck' : 'usePartsTruck')?.value;
+            qtyInfo = ` (${part[truck]} available)`;
+        } else if (categoryModalContext === 'transfer') {
+            const fromTruck = document.getElementById('transferFromTruck')?.value;
+            qtyInfo = ` (${part[fromTruck]} available)`;
+        }
+        
+        card.innerHTML = `
+            <div class="part-card-name">✓ ${part.name}</div>
+            <div class="part-card-details">
+                ${part.partNumber ? `Part #: ${part.partNumber}` : ''}
+                ${qtyInfo}
+            </div>
+        `;
+        
+        card.onclick = () => {
+            if (categoryModalCallback) {
+                categoryModalCallback(partId, part);
+            }
+            closeCategoryModal();
+        };
+        
+        grid.appendChild(card);
+    });
+    
+    // Show message if empty
+    if (subcategories.length === 0 && partsInCategory.length === 0) {
+        grid.innerHTML = '<p style="text-align: center; color: #999; grid-column: 1 / -1;">No items in this category</p>';
+    }
+}
+
+function countItemsInCategory(categoryId) {
+    let count = 0;
+    
+    // Count direct parts
+    count += Object.keys(inventory).filter(id => inventory[id].category === categoryId).length;
+    
+    // Count items in subcategories
+    const subcategories = Object.keys(categories).filter(id => categories[id].parent === categoryId);
+    subcategories.forEach(subId => {
+        count += countItemsInCategory(subId);
+    });
+    
+    return count;
+}
+
+function goBackCategory() {
+    if (currentCategoryPath.length > 0) {
+        currentCategoryPath.pop();
+        renderCategoryGrid();
+    }
+}
+
+// Clear functions for each context
+function clearLoadPart() {
+    document.getElementById('loadPart').value = '';
+    document.getElementById('loadPartDisplay').style.display = 'none';
+}
+
+function clearUsePart() {
+    document.getElementById('usePartsPart').value = '';
+    document.getElementById('usePartDisplay').style.display = 'none';
+}
+
+function clearReturnPart() {
+    document.getElementById('returnPart').value = '';
+    document.getElementById('returnPartDisplay').style.display = 'none';
+}
+
+function clearTransferPart() {
+    document.getElementById('transferPart').value = '';
+    document.getElementById('transferPartDisplay').style.display = 'none';
+}
+
+// Setup modal event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    // Modal close buttons
+    document.getElementById('closeCategoryModal')?.addEventListener('click', closeCategoryModal);
+    document.getElementById('categoryCancelBtn')?.addEventListener('click', closeCategoryModal);
+    document.getElementById('categoryBackBtn')?.addEventListener('click', goBackCategory);
+    
+    // Browse buttons
+    document.getElementById('loadPartBrowseBtn')?.addEventListener('click', function() {
+        openCategoryModal('load', function(partId, part) {
+            document.getElementById('loadPart').value = partId;
+            document.getElementById('loadPartName').textContent = part.name;
+            document.getElementById('loadPartDisplay').style.display = 'block';
+        });
+    });
+    
+    document.getElementById('usePartBrowseBtn')?.addEventListener('click', function() {
+        const truck = document.getElementById('usePartsTruck')?.value;
+        if (!truck) {
+            showToast('Select a truck first', 'error');
+            return;
+        }
+        openCategoryModal('use', function(partId, part) {
+            document.getElementById('usePartsPart').value = partId;
+            document.getElementById('usePartName').textContent = part.name;
+            document.getElementById('usePartDisplay').style.display = 'block';
+        });
+    });
+    
+    document.getElementById('returnPartBrowseBtn')?.addEventListener('click', function() {
+        const truck = document.getElementById('returnTruck')?.value;
+        if (!truck) {
+            showToast('Select a truck first', 'error');
+            return;
+        }
+        openCategoryModal('return', function(partId, part) {
+            document.getElementById('returnPart').value = partId;
+            document.getElementById('returnPartName').textContent = part.name;
+            document.getElementById('returnPartDisplay').style.display = 'block';
+        });
+    });
+    
+    document.getElementById('transferPartBrowseBtn')?.addEventListener('click', function() {
+        const fromTruck = document.getElementById('transferFromTruck')?.value;
+        if (!fromTruck) {
+            showToast('Select "From Truck" first', 'error');
+            return;
+        }
+        openCategoryModal('transfer', function(partId, part) {
+            document.getElementById('transferPart').value = partId;
+            document.getElementById('transferPartName').textContent = part.name;
+            document.getElementById('transferPartDisplay').style.display = 'block';
+        });
+    });
+    
+    // Close modal on background click
+    document.getElementById('categoryModal')?.addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeCategoryModal();
+        }
+    });
+});
