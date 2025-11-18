@@ -403,6 +403,8 @@ async function loadInventory() {
         inventory = {};
         const headers = result.data[0];
         
+        console.log('📋 Inventory Headers:', headers);
+        
         for (let i = 1; i < result.data.length; i++) {
             const row = result.data[i];
             if (row[0]) {
@@ -414,25 +416,44 @@ async function loadInventory() {
                     shop: parseInt(row[5]) || 0
                 };
                 
-                // Dynamic truck columns
-                let colIndex = 6;
+                // ✅ FIXED: Match truck columns by header name, not by iteration order
                 Object.keys(trucks).forEach(truckId => {
-                    item[truckId] = parseInt(row[colIndex]) || 0;
-                    colIndex++;
+                    const colIndex = headers.indexOf(truckId);
+                    if (colIndex !== -1) {
+                        item[truckId] = parseInt(row[colIndex]) || 0;
+                    } else {
+                        console.warn(`Truck column not found: ${truckId}`);
+                        item[truckId] = 0;
+                    }
                 });
                 
-                item.minStock = parseInt(row[colIndex]) || 0;
-                item.minTruckStock = parseInt(row[colIndex + 1]) || 0;
-                item.price = parseFloat(row[colIndex + 2]) || 0;
-                item.purchaseLink = row[colIndex + 3] || '';
-                item.season = row[colIndex + 4] || 'year-round';
+                // Find where MinStock column starts (after all truck columns)
+                const minStockIndex = headers.indexOf('MinStock');
+                
+                if (minStockIndex !== -1) {
+                    item.minStock = parseInt(row[minStockIndex]) || 0;
+                    item.minTruckStock = parseInt(row[minStockIndex + 1]) || 0;
+                    item.price = parseFloat(row[minStockIndex + 2]) || 0;
+                    item.purchaseLink = row[minStockIndex + 3] || '';
+                    item.season = row[minStockIndex + 4] || 'year-round';
+                } else {
+                    // Fallback if headers don't match
+                    item.minStock = 0;
+                    item.minTruckStock = 0;
+                    item.price = 0;
+                    item.purchaseLink = '';
+                    item.season = 'year-round';
+                }
+                
+                console.log(`📦 Loaded part: ${item.name}`, item);
                 
                 inventory[row[0]] = item;
             }
         }
+        
+        console.log('✅ Total parts loaded:', Object.keys(inventory).length);
     }
 }
-
 async function loadHistory() {
     const response = await fetch(SCRIPT_URL + '?action=readHistory');
     const result = await response.json();
