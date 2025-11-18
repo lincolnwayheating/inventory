@@ -73,15 +73,20 @@
             <h2>📦 Load Truck from Shop</h2>
             <div class="form-grid">
                 <div class="form-group">
-                    <label>Scan/Select Part *</label>
+                    <label>Scan Barcode</label>
                     <div class="barcode-input">
                         <input type="text" id="loadBarcode" placeholder="Scan...">
                         <button class="barcode-btn" data-barcode="loadBarcode">📷</button>
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Or Select</label>
-                    <select id="loadPart"></select>
+                    <label>Or Browse Parts *</label>
+                    <button type="button" class="btn btn-secondary" id="loadPartBrowseBtn" style="width: 100%;">📦 Browse Parts</button>
+                    <input type="hidden" id="loadPart">
+                    <div id="loadPartDisplay" style="margin-top: 10px; padding: 10px; background: #f0fff4; border-radius: 5px; display: none;">
+                        <strong id="loadPartName"></strong>
+                        <button type="button" onclick="clearLoadPart()" style="float: right; background: none; border: none; color: #e74c3c; cursor: pointer;">✕</button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>Quantity *</label>
@@ -104,15 +109,20 @@
                     <select id="usePartsTruck"></select>
                 </div>
                 <div class="form-group">
-                    <label>Scan/Select Part *</label>
+                    <label>Scan Barcode</label>
                     <div class="barcode-input">
                         <input type="text" id="usePartsBarcode" placeholder="Scan...">
                         <button class="barcode-btn" data-barcode="usePartsBarcode">📷</button>
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Or Select</label>
-                    <select id="usePartsPart"></select>
+                    <label>Or Browse Parts *</label>
+                    <button type="button" class="btn btn-secondary" id="usePartBrowseBtn" style="width: 100%;">📦 Browse Parts</button>
+                    <input type="hidden" id="usePartsPart">
+                    <div id="usePartDisplay" style="margin-top: 10px; padding: 10px; background: #f0fff4; border-radius: 5px; display: none;">
+                        <strong id="usePartName"></strong>
+                        <button type="button" onclick="clearUsePart()" style="float: right; background: none; border: none; color: #e74c3c; cursor: pointer;">✕</button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>Quantity *</label>
@@ -135,15 +145,20 @@
                     <select id="returnTruck"></select>
                 </div>
                 <div class="form-group">
-                    <label>Scan/Select Part *</label>
+                    <label>Scan Barcode</label>
                     <div class="barcode-input">
                         <input type="text" id="returnBarcode" placeholder="Scan...">
                         <button class="barcode-btn" data-barcode="returnBarcode">📷</button>
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Or Select</label>
-                    <select id="returnPart"></select>
+                    <label>Or Browse Parts *</label>
+                    <button type="button" class="btn btn-secondary" id="returnPartBrowseBtn" style="width: 100%;">📦 Browse Parts</button>
+                    <input type="hidden" id="returnPart">
+                    <div id="returnPartDisplay" style="margin-top: 10px; padding: 10px; background: #f0fff4; border-radius: 5px; display: none;">
+                        <strong id="returnPartName"></strong>
+                        <button type="button" onclick="clearReturnPart()" style="float: right; background: none; border: none; color: #e74c3c; cursor: pointer;">✕</button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>Quantity *</label>
@@ -177,15 +192,20 @@
                     <select id="transferToTruck"></select>
                 </div>
                 <div class="form-group">
-                    <label>Scan/Select Part *</label>
+                    <label>Scan Barcode</label>
                     <div class="barcode-input">
                         <input type="text" id="transferBarcode" placeholder="Scan...">
                         <button class="barcode-btn" data-barcode="transferBarcode">📷</button>
                     </div>
                 </div>
                 <div class="form-group">
-                    <label>Or Select</label>
-                    <select id="transferPart"></select>
+                    <label>Or Browse Parts *</label>
+                    <button type="button" class="btn btn-secondary" id="transferPartBrowseBtn" style="width: 100%;">📦 Browse Parts</button>
+                    <input type="hidden" id="transferPart">
+                    <div id="transferPartDisplay" style="margin-top: 10px; padding: 10px; background: #f0fff4; border-radius: 5px; display: none;">
+                        <strong id="transferPartName"></strong>
+                        <button type="button" onclick="clearTransferPart()" style="float: right; background: none; border: none; color: #e74c3c; cursor: pointer;">✕</button>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label>Quantity *</label>
@@ -212,7 +232,7 @@
             <button class="btn btn-primary" id="quickLoadBtn" style="margin-top: 20px; display: none;">Restock Selected Items</button>
         </div>
         
-<!-- Add Part -->
+        <!-- Add Part -->
         <div id="add-part" class="content">
             <h2>➕ Add New Part</h2>
             <div class="form-grid">
@@ -378,10 +398,6 @@
     </div>
 </div>
 
-<!-- ZXing Barcode Scanner Library -->
-<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
-<script src="script.js?v=4"></script>
-
 <!-- Category Picker Modal -->
 <div class="category-modal" id="categoryModal">
     <div class="category-modal-content">
@@ -400,7 +416,7 @@
 
 <!-- ZXing Barcode Scanner Library -->
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
-<script src="script.js?v=5"></script>
+<script src="script.js?v=6"></script>
 
 </body>
 </html>
