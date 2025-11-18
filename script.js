@@ -524,6 +524,7 @@ function buildTabs() {
         { id: 'use-parts', label: '🔧 Use Parts', permission: 'useParts' },
         { id: 'return-to-shop', label: '↩️ Return to Shop', permission: 'loadTruck' },
         { id: 'history', label: '📋 History', permission: 'viewHistory' },
+        { id: 'transfer-trucks', label: '🔄 Transfer', permission: 'loadTruck' },
         { id: 'quick-load', label: '🚛 Quick Load', permission: 'loadTruck' },
         { id: 'add-part', label: '➕ New Part', permission: 'addParts' },
         { id: 'categories', label: '📁 Categories', permission: 'manageCategories' },
@@ -580,6 +581,7 @@ function switchTab(tabName) {
     if (tabName === 'trucks') updateTruckManager();
     if (tabName === 'settings') updateUserList();
     if (tabName === 'quick-load') updateQuickLoadList();
+    if (tabName === 'load-truck' || tabName === 'return-to-shop' || tabName === 'use-parts' || tabName === 'transfer-trucks') {
     if (tabName === 'load-truck' || tabName === 'return-to-shop' || tabName === 'use-parts') {
         populateDropdowns();
     }
@@ -597,6 +599,8 @@ function setupEventListeners() {
     document.getElementById('addTruckBtn')?.addEventListener('click', addTruck);
     document.getElementById('quickLoadBtn')?.addEventListener('click', processQuickLoad);
     document.getElementById('quickLoadLocation')?.addEventListener('change', updateQuickLoadList);
+    document.getElementById('transferBtn')?.addEventListener('click', transferParts);
+    document.getElementById('transferFromTruck')?.addEventListener('change', updateTransferPartsList);
     
     const clearHistoryBtn = document.getElementById('clearHistoryBtn');
     if (clearHistoryBtn) {
@@ -641,6 +645,7 @@ function startBarcodeScanner(targetInputId) {
             if (targetInputId === 'loadBarcode') lookupBarcode('load', result.text);
             if (targetInputId === 'returnBarcode') lookupBarcode('return', result.text);
             if (targetInputId === 'usePartsBarcode') lookupBarcode('use', result.text);
+            if (targetInputId === 'transferBarcode') lookupBarcode('transfer', result.text);
         }
     });
     
@@ -658,6 +663,7 @@ function lookupBarcode(context, code) {
         if (context === 'load') document.getElementById('loadPart').value = partId;
         if (context === 'return') document.getElementById('returnPart').value = partId;
         if (context === 'use') document.getElementById('usePartsPart').value = partId;
+        if (context === 'transfer') document.getElementById('transferPart').value = partId;
         showToast(`Found: ${inventory[partId].name}`);
     } else {
         showToast('Barcode not found', 'error');
@@ -995,6 +1001,127 @@ async function useParts() {
     }
 }
 
+  // ============================================
+// TRUCK-TO-TRUCK TRANSFER
+// ============================================
+async function transferParts() {
+    if (!hasPermission('loadTruck')) {
+        showToast('No permission', 'error');
+        return;
+    }
+    
+    const fromTruck = document.getElementById('transferFromTruck').value;
+    const toTruck = document.getElementById('transferToTruck').value;
+    const partId = document.getElementById('transferPart').value;
+    const qty = parseInt(document.getElementById('transferQty').value);
+    
+    if (!partId) {
+        showToast('Select a part', 'error');
+        return;
+    }
+    
+    if (fromTruck === toTruck) {
+        showToast('Cannot transfer to the same truck', 'error');
+        return;
+    }
+    
+    // ✅ Reload inventory first
+    showProcessing(true);
+    await loadInventory();
+    
+    const part = inventory[partId];
+    if (part[fromTruck] < qty) {
+        showProcessing(false);
+        showToast(`Only ${part[fromTruck]} available on ${trucks[fromTruck].name}`, 'error');
+        return;
+    }
+    
+    try {
+        // ✅ Update quantities
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    [fromTruck]: part[fromTruck] - qty,
+                    [toTruck]: part[toTruck] + qty
+                }
+            })
+        });
+        
+        const location = await getLocation();
+        const fromTruckName = trucks[fromTruck]?.name || fromTruck;
+        const toTruckName = trucks[toTruck]?.name || toTruck;
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Transferred',
+            details: `${part.name}: ${qty} transferred from ${fromTruckName} to ${toTruckName}`,
+            quantity: qty,
+            from: fromTruckName,
+            to: toTruckName,
+            jobName: '',
+            address: location ? location.address : '',
+            lat: location ? location.lat : '',
+            lon: location ? location.lon : ''
+        });
+        
+        // ✅ Reload from Google Sheets
+        await loadInventory();
+        
+        // Clear form
+        document.getElementById('transferBarcode').value = '';
+        document.getElementById('transferQty').value = '1';
+        document.getElementById('transferPart').value = '';
+        updateTransferPartsList();
+        
+        updateDashboard();
+        showProcessing(false);
+        showToast(`${qty} transferred from ${fromTruckName} to ${toTruckName}!`);
+    } catch (error) {
+        showProcessing(false);
+        console.error('Transfer error:', error);
+        showToast('Error transferring parts', 'error');
+    }
+}
+
+function updateTransferPartsList() {
+    const fromTruck = document.getElementById('transferFromTruck')?.value;
+    const select = document.getElementById('transferPart');
+    if (!select || !fromTruck) return;
+    
+    select.innerHTML = '<option value="">-- Select Part --</option>';
+    
+    const byCategory = {};
+    Object.keys(inventory).forEach(id => {
+        const part = inventory[id];
+        if (part[fromTruck] > 0) {
+            const catPath = getCategoryPath(part.category);
+            if (!byCategory[catPath]) byCategory[catPath] = [];
+            byCategory[catPath].push({id, name: part.name, qty: part[fromTruck]});
+        }
+    });
+    
+    Object.keys(byCategory).sort().forEach(catPath => {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = catPath;
+        
+        // Sort alphabetically
+        byCategory[catPath].sort((a, b) => a.name.localeCompare(b.name));
+        
+        byCategory[catPath].forEach(item => {
+            const opt = document.createElement('option');
+            opt.value = item.id;
+            opt.textContent = `${item.name} (${item.qty})`;
+            optgroup.appendChild(opt);
+        });
+        select.appendChild(optgroup);
+    });
+}  
+
 // ============================================
 // QUICK LOAD FEATURE
 // ============================================
@@ -1328,6 +1455,31 @@ function populateDropdowns() {
             opt.value = id;
             opt.textContent = `🚚 ${trucks[id].name} (from shop)`;
             quickLoadLocation.appendChild(opt);
+        });
+    }
+    const transferFromTruck = document.getElementById('transferFromTruck');
+    if (transferFromTruck) {
+        transferFromTruck.innerHTML = '';
+        Object.keys(trucks).filter(id => trucks[id].active).forEach(id => {
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.textContent = trucks[id].name;
+            transferFromTruck.appendChild(opt);
+        });
+        if (userTruck && trucks[userTruck]) {
+            transferFromTruck.value = userTruck;
+        }
+        updateTransferPartsList();
+    }
+    
+    const transferToTruck = document.getElementById('transferToTruck');
+    if (transferToTruck) {
+        transferToTruck.innerHTML = '';
+        Object.keys(trucks).filter(id => trucks[id].active).forEach(id => {
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.textContent = trucks[id].name;
+            transferToTruck.appendChild(opt);
         });
     }
 }  // ← CLOSING BRACE STAYS HERE
