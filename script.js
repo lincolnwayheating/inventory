@@ -2360,25 +2360,7 @@ function renderCategoryTree() {
         div.style.paddingLeft = level > 0 ? '15px' : '0';
         
         // Get part count (EXACT category only, not including subcategories)
-const partCount = getPartsInExactCategory(catId).length;
-```
-
----
-
-## 🎯 What This Changes
-
-**Before (Wrong):**
-```
-📂 Furnace (58 parts, 3 sub)
-  📁 ↳ Flame Sensors (58 parts)    ← WRONG! Includes parent's parts
-    📦   ↳ Universal (58 parts)    ← WRONG! Includes everyone's parts
-```
-
-**After (Correct):**
-```
-📂 Furnace (12 parts, 3 sub)
-  📁 ↳ Flame Sensors (5 parts)     ← Only Flame Sensors parts
-    📦   ↳ Universal (3 parts)     ← Only Universal parts
+        const partCount = getPartsInExactCategory(catId).length;
         
         // Get direct children count
         const childCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
@@ -2427,7 +2409,6 @@ const partCount = getPartsInExactCategory(catId).length;
         container.innerHTML = '<p style="color: #666; text-align: center; padding: 40px;">No categories yet</p>';
     }
 }
-
 async function addCategory() {
     const name = document.getElementById('newCategoryName').value.trim();
     const parent = document.getElementById('newCategoryParent').value;
