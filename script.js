@@ -1287,39 +1287,7 @@ function renderPartModalList(filter = '') {
     }
 }
     
-    const grid = document.createElement('div');
-    grid.className = 'parts-grid';
-    
-    parts.sort((a, b) => inventory[a].name.localeCompare(inventory[b].name)).forEach(id => {
-        const part = inventory[id];
-        const card = document.createElement('div');
-        card.className = 'part-card';
-        
-        let imageHTML = '';
-        if (part.imageUrl) {
-            imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                         <div class="part-card-placeholder" style="display: none;">📦</div>`;
-        } else {
-            imageHTML = '<div class="part-card-placeholder">📦</div>';
-        }
-        
-        card.innerHTML = `
-            ${imageHTML}
-            <div class="part-card-name">${part.name}</div>
-            <div class="part-card-number">Part #: ${part.id}</div>
-        `;
-        
-        card.onclick = () => selectPart(id);
-        grid.appendChild(card);
-    });
-    
-    body.appendChild(grid);
-    
-    if (parts.length === 0) {
-        body.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No parts available</p>';
-    }
-}
-
+ 
 function filterPartModal(searchTerm) {
     renderPartModalList(searchTerm);
 }
