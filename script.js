@@ -1181,7 +1181,10 @@ function renderPartModalList(filter = '') {
         
         rootCategories.forEach(catId => {
             const cat = categories[catId];
-            const partCount = getPartsInCategory(catId).filter(partId => parts.includes(partId)).length;
+         const allParts = getPartsInCategory(catId);
+            const availableParts = allParts.filter(partId => parts.includes(partId));
+            const partCount = availableParts.length;
+            const totalParts = allParts.length;
             const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
             const icon = subcatCount > 0 ? '📁' : '📦';
             
@@ -1250,17 +1253,28 @@ function renderPartModalList(filter = '') {
             body.appendChild(categoryGrid);
         }
         
-        // Show parts in this category
-        const categoryParts = getPartsInCategory(currentBrowsingCategory).filter(partId => parts.includes(partId));
+       // Show parts in this category - use all parts when browsing, not context-filtered
+        const allPartsInCategory = getPartsInCategory(currentBrowsingCategory);
+        const categoryParts = allPartsInCategory.filter(partId => parts.includes(partId));
         
-        if (categoryParts.length > 0) {
+        // If no parts match context filter, show all parts with a note
+        const displayParts = categoryParts.length > 0 ? categoryParts : allPartsInCategory;
+        
+       if (displayParts.length > 0) {
             const grid = document.createElement('div');
             grid.className = 'parts-grid';
             
-            categoryParts.sort((a, b) => inventory[a].name.localeCompare(inventory[b].name)).forEach(id => {
+            displayParts.sort((a, b) => inventory[a].name.localeCompare(inventory[b].name)).forEach(id => {
                 const part = inventory[id];
                 const card = document.createElement('div');
                 card.className = 'part-card';
+                
+                // Check if part is available in current context
+                const isAvailable = parts.includes(id);
+                if (!isAvailable) {
+                    card.style.opacity = '0.5';
+                    card.style.pointerEvents = 'none';
+                }
                 
                 let imageHTML = '';
                 if (part.imageUrl) {
@@ -1274,9 +1288,12 @@ function renderPartModalList(filter = '') {
                     ${imageHTML}
                     <div class="part-card-name">${part.name}</div>
                     <div class="part-card-number">Part #: ${part.id}</div>
+                    ${!isAvailable ? '<div style="color: #999; font-size: 0.8em;">Not available</div>' : ''}
                 `;
                 
-                card.onclick = () => selectPart(id);
+                if (isAvailable) {
+                    card.onclick = () => selectPart(id);
+                }
                 grid.appendChild(card);
             });
             
