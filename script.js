@@ -555,25 +555,24 @@ function setupEventListeners() {
         filterPartModal(e.target.value);
     });
     
-    // Filter buttons
-    document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            
-            const filter = this.getAttribute('data-filter');
-            currentViewMode = filter;
-            
-            if (filter === 'category') {
-                document.getElementById('categoryFilterContainer').style.display = 'block';
-            } else {
-                document.getElementById('categoryFilterContainer').style.display = 'none';
-                currentCategoryFilter = '';
-            }
-            
-            renderAllParts();
-        });
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        
+        const filter = this.getAttribute('data-filter');
+        currentViewMode = filter;
+        currentBrowsingCategory = null; // Reset when switching modes
+        
+        // Clear search when switching to browse
+        if (filter === 'browse') {
+            document.getElementById('searchAllParts').value = '';
+        }
+        
+        renderAllParts();
     });
+});
     
     document.getElementById('categoryFilter')?.addEventListener('change', function(e) {
         currentCategoryFilter = e.target.value;
