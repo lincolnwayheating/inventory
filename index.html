@@ -68,25 +68,24 @@
         </div>
         
         <!-- All Parts -->
-        <div id="all-parts" class="content">
-            <div style="margin-bottom: 15px;">
-                <input type="text" id="searchAllParts" placeholder="🔍 Search parts..." class="search-input">
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-                <label style="font-weight: 600; margin-right: 10px;">Filter:</label>
-                <button class="btn btn-secondary filter-btn active" data-filter="all">All Parts</button>
-                <button class="btn btn-secondary filter-btn" data-filter="category">By Category</button>
-            </div>
-            
-            <div id="categoryFilterContainer" style="display: none; margin-bottom: 15px;">
-                <select id="categoryFilter" class="category-select">
-                    <option value="">All Categories</option>
-                </select>
-            </div>
-            
-            <div id="allPartsGrid" class="parts-grid"></div>
-        </div>
+       <div id="all-parts" class="content">
+    <div style="margin-bottom: 15px;">
+        <input type="text" id="searchAllParts" placeholder="🔍 Search parts..." class="search-input">
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <button class="btn btn-secondary filter-btn active" data-filter="all">📦 All Parts</button>
+        <button class="btn btn-secondary filter-btn" data-filter="browse">📁 Browse Categories</button>
+    </div>
+    
+    <!-- Category Browser -->
+    <div id="categoryBrowser" style="display: none; margin-bottom: 20px;">
+        <div id="categoryBreadcrumb" style="margin-bottom: 15px; font-size: 0.9em; color: #666;"></div>
+        <div id="categoryNavGrid" class="category-nav-grid"></div>
+    </div>
+    
+    <div id="allPartsGrid" class="parts-grid"></div>
+</div>
         
         <!-- Quick Actions -->
         <div id="quick-actions" class="content">
