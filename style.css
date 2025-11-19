@@ -1,5 +1,5 @@
 /* ============================================
-   HVAC INVENTORY - CLEAN MODERN UI
+   HVAC INVENTORY - CLEAN UI v2
    ============================================ */
 
 * {
@@ -47,7 +47,6 @@ body {
     padding: 40px;
     border-radius: 15px;
     text-align: center;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
 }
 
 .spinner {
@@ -304,6 +303,18 @@ body {
     color: white;
 }
 
+.filter-btn {
+    margin-right: 8px;
+    margin-bottom: 8px;
+    padding: 8px 16px;
+    font-size: 0.9em;
+}
+
+.filter-btn.active {
+    background: #667eea;
+    color: white;
+}
+
 /* ============================================
    FORMS
    ============================================ */
@@ -335,7 +346,9 @@ body {
 }
 
 .form-group input,
-.form-group select {
+.form-group select,
+.form-select,
+.form-input {
     padding: 10px;
     border: 2px solid #e0e0e0;
     border-radius: 8px;
@@ -343,9 +356,27 @@ body {
 }
 
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-select:focus,
+.form-input:focus {
     outline: none;
     border-color: #667eea;
+}
+
+.search-input {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 1em;
+}
+
+.category-select {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 0.95em;
 }
 
 /* ============================================
@@ -366,12 +397,24 @@ body {
 }
 
 /* ============================================
+   SCAN MODE
+   ============================================ */
+
+.scan-mode-toggle {
+    background: #fff3cd;
+    border: 3px solid #ffc107;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+}
+
+/* ============================================
    PARTS GRID
    ============================================ */
 
 .parts-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 15px;
 }
 
@@ -393,16 +436,17 @@ body {
 
 .part-card-image {
     width: 100%;
-    max-width: 120px;
-    height: 120px;
+    max-width: 100px;
+    height: 100px;
     object-fit: cover;
     border-radius: 8px;
-    margin-bottom: 10px;
+    margin: 0 auto 10px;
+    display: block;
 }
 
 .part-card-placeholder {
-    width: 120px;
-    height: 120px;
+    width: 100px;
+    height: 100px;
     background: #f0f0f0;
     border-radius: 8px;
     display: flex;
@@ -416,12 +460,18 @@ body {
     font-weight: 600;
     margin-bottom: 5px;
     color: #333;
-    font-size: 1em;
+    font-size: 0.95em;
 }
 
 .part-card-number {
     color: #666;
-    font-size: 0.85em;
+    font-size: 0.8em;
+    margin-bottom: 8px;
+}
+
+.part-card-category {
+    color: #999;
+    font-size: 0.75em;
     margin-bottom: 8px;
 }
 
@@ -431,13 +481,14 @@ body {
     margin-top: 10px;
     padding-top: 10px;
     border-top: 1px solid #e0e0e0;
-    font-size: 0.85em;
+    font-size: 0.8em;
 }
 
 .stock-badge {
     padding: 4px 8px;
     border-radius: 5px;
     font-weight: 600;
+    font-size: 0.85em;
 }
 
 .stock-ok {
@@ -456,7 +507,7 @@ body {
 }
 
 /* ============================================
-   LOW STOCK DISPLAY
+   LOW STOCK
    ============================================ */
 
 .low-stock-section {
@@ -466,11 +517,12 @@ body {
 .low-stock-section h3 {
     color: #e74c3c;
     margin-bottom: 15px;
+    font-size: 1.2em;
 }
 
 .low-stock-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 15px;
 }
 
@@ -479,11 +531,25 @@ body {
     border-left: 4px solid #ffc107;
     padding: 15px;
     border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.low-stock-item:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .low-stock-item.critical {
     background: #f8d7da;
     border-left-color: #e74c3c;
+}
+
+.low-stock-item img {
+    width: 60px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 8px;
+    margin-bottom: 8px;
 }
 
 /* ============================================
@@ -610,30 +676,102 @@ body {
 }
 
 /* ============================================
-   QUICK LOAD
+   BARCODE SCANNER
    ============================================ */
 
-.season-filter {
+.scanner-container {
+    position: relative;
+    width: 100%;
+    height: 400px;
+    background: black;
+}
+
+#barcodeScannerVideo {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.scanner-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     display: flex;
-    gap: 15px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.scanner-box {
+    width: 250px;
+    height: 150px;
+    border: 3px solid #28a745;
+    border-radius: 10px;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+}
+
+.scanner-overlay p {
+    color: white;
+    font-size: 1.1em;
+    margin-top: 20px;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* ============================================
+   CATEGORY TREE
+   ============================================ */
+
+.category-tree-item {
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    border-left: 3px solid #667eea;
+}
+
+.category-tree-child {
+    margin-left: 30px;
+    margin-top: 8px;
+}
+
+/* ============================================
+   SETTINGS
+   ============================================ */
+
+.settings-section {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+}
+
+.season-checkboxes {
+    display: flex;
+    gap: 20px;
     flex-wrap: wrap;
 }
 
-.season-filter label {
+.season-checkboxes label {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 8px;
     font-weight: normal;
 }
 
-.season-checkbox {
-    width: 18px;
-    height: 18px;
+.season-checkboxes input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
 }
+
+/* ============================================
+   QUICK LOAD
+   ============================================ */
 
 .quick-load-item {
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto auto 1fr auto;
     gap: 15px;
     align-items: center;
     background: white;
@@ -646,6 +784,13 @@ body {
 .quick-load-checkbox {
     width: 20px;
     height: 20px;
+}
+
+.quick-load-image {
+    width: 60px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 8px;
 }
 
 /* ============================================
@@ -691,6 +836,7 @@ body {
     transform: translateY(20px);
     transition: all 0.3s;
     font-weight: 600;
+    max-width: 90%;
 }
 
 .toast.show {
@@ -702,45 +848,8 @@ body {
     background: #e74c3c;
 }
 
-/* ============================================
-   BARCODE SCANNER
-   ============================================ */
-
-#barcodeScanner {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: black;
-    z-index: 10000;
-}
-
-#barcodeScannerVideo {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
-
-#barcodeScannerOverlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.3);
-}
-
-#barcodeScannerOverlay p {
-    color: white;
-    font-size: 1.2em;
-    font-weight: 600;
-    margin-bottom: 20px;
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+.toast-success {
+    background: #28a745;
 }
 
 /* ============================================
@@ -749,7 +858,7 @@ body {
 
 @media (max-width: 768px) {
     .parts-grid {
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     }
     
     .form-grid,
@@ -759,5 +868,11 @@ body {
     
     .low-stock-grid {
         grid-template-columns: 1fr;
+    }
+    
+    .part-card-image,
+    .part-card-placeholder {
+        width: 80px;
+        height: 80px;
     }
 }
