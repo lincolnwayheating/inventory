@@ -929,9 +929,9 @@ const subcategories = Object.keys(categories)
                 navGrid.appendChild(card);
             });
             
-            // Show parts in this category and subcategories
-            grid.style.display = 'grid';
-            let parts = getPartsInCategory(currentBrowsingCategory);
+            // Show parts in this EXACT category only (not subcategories)
+grid.style.display = 'grid';
+let parts = getPartsInExactCategory(currentBrowsingCategory);
             
             if (parts.length === 0) {
                 grid.innerHTML = '<p style="text-align: center; color: #666; padding: 40px; grid-column: 1 / -1;">No parts in this category</p>';
@@ -979,7 +979,7 @@ function createCategoryCard(catId) {
     const card = document.createElement('div');
     card.className = 'category-nav-card';
     
-    const partCount = getPartsInCategory(catId).length;
+    const partCount = getPartsInExactCategory(catId).length;
     
    const subcatCount = Object.keys(categories).filter(id => {
     return categories[id].parent === catId;
@@ -1017,6 +1017,13 @@ function getPartsInCategory(categoryId) {
     
     return Object.keys(inventory).filter(partId => {
         return categoryIds.includes(inventory[partId].category);
+    });
+}
+
+function getPartsInExactCategory(categoryId) {
+    // Get parts ONLY in this exact category (no subcategories)
+    return Object.keys(inventory).filter(partId => {
+        return inventory[partId].category === categoryId;
     });
 }
 
@@ -1181,7 +1188,7 @@ function renderPartModalList(filter = '') {
         
         rootCategories.forEach(catId => {
             const cat = categories[catId];
-         const allParts = getPartsInCategory(catId);
+         const allParts = getPartsInExactCategory(catId);
             const availableParts = allParts.filter(partId => parts.includes(partId));
             const partCount = availableParts.length;
             const totalParts = allParts.length;
@@ -1232,7 +1239,7 @@ function renderPartModalList(filter = '') {
             
             subcategories.forEach(catId => {
     const cat = categories[catId];
-    const totalParts = getPartsInCategory(catId).length;
+    const totalParts = getPartsInExactCategory(catId).length;
     const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
     const icon = subcatCount > 0 ? '📁' : '📦';
     
@@ -1253,8 +1260,8 @@ function renderPartModalList(filter = '') {
             body.appendChild(categoryGrid);
         }
         
-       // Show parts in this category - use all parts when browsing, not context-filtered
-        const allPartsInCategory = getPartsInCategory(currentBrowsingCategory);
+       // Show parts in this EXACT category only (not subcategories)
+const allPartsInCategory = getPartsInExactCategory(currentBrowsingCategory);
         const categoryParts = allPartsInCategory.filter(partId => parts.includes(partId));
         
         // If no parts match context filter, show all parts with a note
