@@ -887,11 +887,13 @@ function renderAllParts(searchTerm = '') {
     let parts = Object.keys(inventory);
     
     // Filter by search
-    if (searchTerm) {
+    if (searchTerm && searchTerm.trim() !== '') {
+        const search = searchTerm.toLowerCase().trim();
         parts = parts.filter(id => {
             const part = inventory[id];
-            return part.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                   part.id.toLowerCase().includes(searchTerm.toLowerCase());
+            return part.name.toLowerCase().includes(search) ||
+                   part.id.toLowerCase().includes(search) ||
+                   (part.barcode && part.barcode.toLowerCase().includes(search));
         });
     }
     
@@ -949,6 +951,11 @@ function renderAllParts(searchTerm = '') {
             grid.appendChild(createPartCard(id));
         });
     }
+    
+    if (parts.length === 0) {
+        grid.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No parts found</p>';
+    }
+}
     
     if (parts.length === 0) {
         grid.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No parts found</p>';
