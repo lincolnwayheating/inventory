@@ -3,7 +3,7 @@
 // All Features Restored + Improvements
 // ============================================
 
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl8H2urrCb2KWrHuWlwcqvuSeAT5Q93q4fztX3xg7o0dsCI0MHe9pIAKoo_CnM-Bg/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwQ16GPuzCPNXs9sSs16Bi4Ys3-JsMNyyHoXibRJ9uGirPE5J15b_DvSZ-RDGM_j1k/exec';
 
 // Global State
 let inventory = {};
