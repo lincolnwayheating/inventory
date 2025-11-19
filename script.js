@@ -1,5 +1,6 @@
 // ============================================
-// HVAC INVENTORY - COMPLETE REWRITE
+// HVAC INVENTORY - COMPLETE v2
+// All Features Restored + Improvements
 // ============================================
 
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyl8H2urrCb2KWrHuWlwcqvuSeAT5Q93q4fztX3xg7o0dsCI0MHe9pIAKoo_CnM-Bg/exec';
@@ -10,17 +11,20 @@ let users = {};
 let categories = {};
 let trucks = {};
 let history = [];
+let settings = {};
 let currentUser = null;
 let currentUserPin = null;
 let isOwner = false;
 let userTruck = null;
+let canEditPIN = false;
 
-// Selected parts for actions
+// Selected parts
 let selectedParts = {
     load: null,
     use: null,
     return: null,
-    receive: null
+    receive: null,
+    transfer: null
 };
 
 // PIN Lockout
@@ -30,10 +34,17 @@ const LOCKOUT_TIMES = [0, 0, 0, 0, 0, 60000, 300000, 900000, 1800000, 3600000];
 
 // Barcode Scanner
 let codeReader = null;
-let currentBarcodeContext = null;
+let currentBarcodeTarget = null;
+let scanModeActive = false;
+let lastScannedCode = '';
+let lastScanTime = 0;
 
 // Image Upload
 let uploadedImageUrl = '';
+
+// Current filter state
+let currentCategoryFilter = '';
+let currentViewMode = 'all';
 
 // ============================================
 // INITIALIZATION
@@ -45,29 +56,67 @@ document.addEventListener('DOMContentLoaded', function() {
         codeReader = new ZXing.BrowserMultiFormatReader();
     }
     
+    // Auto-focus PIN input on desktop
+    const pinInput = document.getElementById('pinInput');
+    if (pinInput) {
+        // Focus immediately
+        setTimeout(() => {
+            pinInput.focus();
+        }, 100);
+        
+        // Keep focus on PIN input
+        pinInput.addEventListener('blur', function() {
+            if (document.getElementById('loginScreen').style.display !== 'none') {
+                setTimeout(() => this.focus(), 100);
+            }
+        });
+    }
+    
     // Login handlers
     document.getElementById('loginBtn').addEventListener('click', login);
     document.getElementById('logoutBtn').addEventListener('click', logout);
     document.getElementById('refreshBtn').addEventListener('click', refreshData);
     
-    const pinInput = document.getElementById('pinInput');
     pinInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') login();
     });
     
     pinInput.addEventListener('input', function(e) {
+        // Only allow numbers
+        this.value = this.value.replace(/[^0-9]/g, '');
         if (this.value.length === 4) {
             setTimeout(() => login(), 100);
         }
     });
     
-    // Search
-    document.getElementById('searchAllParts')?.addEventListener('input', function(e) {
-        filterAllParts(e.target.value);
-    });
+    // Listen for physical barcode scanner input
+    let barcodeBuffer = '';
+    let barcodeTimeout = null;
     
-    document.getElementById('partModalSearch')?.addEventListener('input', function(e) {
-        filterPartModal(e.target.value);
+    document.addEventListener('keypress', function(e) {
+        // Ignore if user is typing in an input field (except during scan mode)
+        if (!scanModeActive && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+            return;
+        }
+        
+        // Clear timeout
+        clearTimeout(barcodeTimeout);
+        
+        // Add character to buffer
+        if (e.key === 'Enter') {
+            // Barcode complete
+            if (barcodeBuffer.length > 3) {
+                handlePhysicalScannerInput(barcodeBuffer);
+            }
+            barcodeBuffer = '';
+        } else {
+            barcodeBuffer += e.key;
+            
+            // Reset buffer after 100ms of no input
+            barcodeTimeout = setTimeout(() => {
+                barcodeBuffer = '';
+            }, 100);
+        }
     });
 });
 
@@ -88,7 +137,6 @@ async function login() {
         return;
     }
     
-    // Reset lockout if time passed
     if (lockoutUntil && Date.now() >= lockoutUntil) {
         lockoutUntil = 0;
         loginAttempts = 0;
@@ -110,7 +158,8 @@ async function login() {
                     users[row[0]] = {
                         name: row[1],
                         truck: row[2],
-                        isOwner: (row[3] === 'TRUE' || row[3] === true)
+                        isOwner: (row[3] === 'TRUE' || row[3] === true),
+                        canEditPIN: (row[4] === 'TRUE' || row[4] === true)
                     };
                 }
             }
@@ -127,10 +176,14 @@ async function login() {
                 currentUserPin = pin;
                 isOwner = user.isOwner;
                 userTruck = user.truck;
+                canEditPIN = user.canEditPIN;
+                
+                // Log login
+                await logLoginHistory(user.name, pin, 'Login', 'User logged in');
                 
                 document.getElementById('loginScreen').style.display = 'none';
                 document.getElementById('appContainer').style.display = 'block';
-                document.getElementById('userBadge').textContent = user.name + (user.isOwner ? ' (Owner)' : '');
+                document.getElementById('userBadge').textContent = user.name + (user.isOwner ? ' 👑' : '');
                 
                 await init();
             } else {
@@ -155,6 +208,9 @@ async function login() {
                 }
                 
                 document.getElementById('pinInput').value = '';
+                setTimeout(() => {
+                    document.getElementById('pinInput').focus();
+                }, 100);
             }
         }
     } catch (error) {
@@ -170,9 +226,15 @@ function logout() {
         currentUserPin = null;
         isOwner = false;
         userTruck = null;
+        canEditPIN = false;
         document.getElementById('pinInput').value = '';
         document.getElementById('loginScreen').style.display = 'flex';
         document.getElementById('appContainer').style.display = 'none';
+        
+        // Re-focus PIN input
+        setTimeout(() => {
+            document.getElementById('pinInput').focus();
+        }, 100);
     }
 }
 
@@ -180,6 +242,9 @@ async function init() {
     showProcessing(true);
     
     try {
+        await loadSettings();
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
         await loadCategories();
         await new Promise(resolve => setTimeout(resolve, 200));
         
@@ -210,6 +275,9 @@ async function refreshData() {
     try {
         const timestamp = Date.now();
         
+        await loadSettings();
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
         await loadCategories();
         await new Promise(resolve => setTimeout(resolve, 200));
         
@@ -231,6 +299,7 @@ async function refreshData() {
             if (tabId === 'quick-load') updateQuickLoadList();
             if (tabId === 'history') updateHistory();
             if (tabId === 'settings') updateSettings();
+            if (tabId === 'categories') renderCategoryTree();
         }
         
         showProcessing(false);
@@ -245,6 +314,31 @@ async function refreshData() {
 // ============================================
 // DATA LOADING
 // ============================================
+
+async function loadSettings() {
+    try {
+        const response = await fetch(SCRIPT_URL + '?action=readSettings');
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+            settings = {};
+            for (let i = 1; i < result.data.length; i++) {
+                const row = result.data[i];
+                if (row[0]) {
+                    settings[row[0]] = row[1];
+                }
+            }
+            
+            // Set default if not exists
+            if (!settings.ActiveSeasons) {
+                settings.ActiveSeasons = 'heating,cooling,year-round';
+            }
+        }
+    } catch (error) {
+        console.error('Load settings error:', error);
+        settings.ActiveSeasons = 'heating,cooling,year-round';
+    }
+}
 
 async function loadCategories() {
     const response = await fetch(SCRIPT_URL + '?action=readCategories');
@@ -293,9 +387,9 @@ async function loadInventory() {
         
         for (let i = 1; i < result.data.length; i++) {
             const row = result.data[i];
-            if (row[0]) { // PartNumber is now the ID
+            if (row[0]) {
                 const item = {
-                    id: row[0], // PartNumber
+                    id: row[0],
                     name: row[1] || '',
                     category: row[2] || 'other',
                     barcode: row[3] || '',
@@ -304,7 +398,6 @@ async function loadInventory() {
                 };
                 
                 // Add truck quantities
-                let colIndex = 6;
                 Object.keys(trucks).forEach(truckId => {
                     const truckColIndex = headers.indexOf(truckId);
                     if (truckColIndex !== -1) {
@@ -363,6 +456,24 @@ async function loadHistory() {
     }
 }
 
+async function logLoginHistory(userName, pin, action, details) {
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'logLogin',
+                userName: userName,
+                pin: pin,
+                loginAction: action,
+                details: details
+            })
+        });
+    } catch (error) {
+        console.error('Login history error:', error);
+    }
+}
+
 // ============================================
 // UI BUILDERS
 // ============================================
@@ -373,13 +484,14 @@ function buildTabs() {
     
     const tabs = [
         { id: 'dashboard', label: '⚠️ Low Stock', show: true },
-        { id: 'all-parts', label: '📦 All Parts', show: true },
-        { id: 'quick-actions', label: '⚡ Quick Actions', show: true },
-        { id: 'quick-load', label: '🚛 Restock', show: true },
+        { id: 'all-parts', label: '📦 Parts', show: true },
+        { id: 'quick-actions', label: '⚡ Actions', show: true },
+        { id: 'quick-load', label: '🚛 Quick Load', show: true },
         { id: 'receive-stock', label: '📥 Receive', show: true },
-        { id: 'add-part', label: '➕ New Part', show: isOwner },
+        { id: 'add-part', label: '➕ Add Part', show: isOwner },
+        { id: 'categories', label: '📁 Categories', show: isOwner },
         { id: 'history', label: '📋 History', show: true },
-        { id: 'settings', label: '⚙️ Settings', show: isOwner }
+        { id: 'settings', label: '⚙️ Settings', show: true }
     ];
     
     tabs.forEach((tab, i) => {
@@ -397,10 +509,12 @@ function switchTab(tabName) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
     
-    const clickedTab = Array.from(document.querySelectorAll('.tab')).find(t => 
-        t.textContent.includes(getTabLabel(tabName))
-    );
-    if (clickedTab) clickedTab.classList.add('active');
+    const tabs = document.querySelectorAll('.tab');
+    tabs.forEach(tab => {
+        if (tab.textContent.includes(getTabLabel(tabName))) {
+            tab.classList.add('active');
+        }
+    });
     
     const content = document.getElementById(tabName);
     if (content) {
@@ -412,17 +526,19 @@ function switchTab(tabName) {
         if (tabName === 'quick-load') updateQuickLoadList();
         if (tabName === 'history') updateHistory();
         if (tabName === 'settings') updateSettings();
+        if (tabName === 'categories') renderCategoryTree();
     }
 }
 
 function getTabLabel(tabId) {
     const labels = {
         'dashboard': 'Low Stock',
-        'all-parts': 'All Parts',
-        'quick-actions': 'Quick Actions',
-        'quick-load': 'Restock',
+        'all-parts': 'Parts',
+        'quick-actions': 'Actions',
+        'quick-load': 'Quick Load',
         'receive-stock': 'Receive',
-        'add-part': 'New Part',
+        'add-part': 'Add Part',
+        'categories': 'Categories',
         'history': 'History',
         'settings': 'Settings'
     };
@@ -430,10 +546,45 @@ function getTabLabel(tabId) {
 }
 
 function setupEventListeners() {
+    // Search
+    document.getElementById('searchAllParts')?.addEventListener('input', function(e) {
+        renderAllParts(e.target.value);
+    });
+    
+    document.getElementById('partModalSearch')?.addEventListener('input', function(e) {
+        filterPartModal(e.target.value);
+    });
+    
+    // Filter buttons
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            
+            const filter = this.getAttribute('data-filter');
+            currentViewMode = filter;
+            
+            if (filter === 'category') {
+                document.getElementById('categoryFilterContainer').style.display = 'block';
+            } else {
+                document.getElementById('categoryFilterContainer').style.display = 'none';
+                currentCategoryFilter = '';
+            }
+            
+            renderAllParts();
+        });
+    });
+    
+    document.getElementById('categoryFilter')?.addEventListener('change', function(e) {
+        currentCategoryFilter = e.target.value;
+        renderAllParts();
+    });
+    
     // Quick Actions
     document.getElementById('loadTruckBtn')?.addEventListener('click', loadTruck);
     document.getElementById('usePartsBtn')?.addEventListener('click', useParts);
     document.getElementById('returnBtn')?.addEventListener('click', returnToShop);
+    document.getElementById('transferBtn')?.addEventListener('click', transferParts);
     
     // Receive Stock
     document.getElementById('receiveStockBtn')?.addEventListener('click', receiveStock);
@@ -448,11 +599,10 @@ function setupEventListeners() {
     // Quick Load
     document.getElementById('quickLoadBtn')?.addEventListener('click', processQuickLoad);
     document.getElementById('quickLoadLocation')?.addEventListener('change', updateQuickLoadList);
-    document.querySelectorAll('.season-checkbox').forEach(cb => {
-        cb.addEventListener('change', updateQuickLoadList);
-    });
     
     // Settings
+    document.getElementById('saveSeasonsBtn')?.addEventListener('click', saveActiveSeasons);
+    document.getElementById('changePinBtn')?.addEventListener('click', changePIN);
     document.getElementById('addCategoryBtn')?.addEventListener('click', addCategory);
     document.getElementById('addTruckBtn')?.addEventListener('click', addTruck);
     document.getElementById('addUserBtn')?.addEventListener('click', addUser);
@@ -465,9 +615,18 @@ function setupEventListeners() {
         });
     });
     
+    // Barcode scan buttons
+    document.querySelectorAll('.barcode-scan-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const target = this.getAttribute('data-target');
+            startCameraBarcodeScanner(target);
+        });
+    });
+    
     // Modal close buttons
     document.getElementById('closePartModal')?.addEventListener('click', closePartModal);
     document.getElementById('closePartDetailModal')?.addEventListener('click', closePartDetailModal);
+    document.getElementById('closeBarcodeScannerModal')?.addEventListener('click', stopCameraBarcodeScanner);
 }
 
 function populateDropdowns() {
@@ -475,7 +634,9 @@ function populateDropdowns() {
     const categorySelect = document.getElementById('partCategory');
     if (categorySelect) {
         categorySelect.innerHTML = '<option value="">-- Select --</option>';
-        Object.keys(categories).sort().forEach(id => {
+        Object.keys(categories).sort((a, b) => {
+            return categories[a].name.localeCompare(categories[b].name);
+        }).forEach(id => {
             const opt = document.createElement('option');
             opt.value = id;
             opt.textContent = categories[id].name;
@@ -483,8 +644,46 @@ function populateDropdowns() {
         });
     }
     
+    // Category filter
+    const categoryFilter = document.getElementById('categoryFilter');
+    if (categoryFilter) {
+        categoryFilter.innerHTML = '<option value="">All Categories</option>';
+        
+        // Get root categories
+        Object.keys(categories).filter(id => !categories[id].parent).sort((a, b) => {
+            return categories[a].name.localeCompare(categories[b].name);
+        }).forEach(id => {
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.textContent = categories[id].name;
+            categoryFilter.appendChild(opt);
+            
+            // Add children
+            Object.keys(categories).filter(childId => categories[childId].parent === id).forEach(childId => {
+                const childOpt = document.createElement('option');
+                childOpt.value = childId;
+                childOpt.textContent = '  ↳ ' + categories[childId].name;
+                categoryFilter.appendChild(childOpt);
+            });
+        });
+    }
+    
+    // Parent category for adding
+    const newCategoryParent = document.getElementById('newCategoryParent');
+    if (newCategoryParent) {
+        newCategoryParent.innerHTML = '<option value="">Top Level</option>';
+        Object.keys(categories).filter(id => !categories[id].parent).sort((a, b) => {
+            return categories[a].name.localeCompare(categories[b].name);
+        }).forEach(id => {
+            const opt = document.createElement('option');
+            opt.value = categories[id].name;
+            opt.textContent = categories[id].name;
+            newCategoryParent.appendChild(opt);
+        });
+    }
+    
     // Trucks
-    const truckSelects = ['loadTruck', 'useTruck', 'returnTruck', 'newUserTruck'];
+    const truckSelects = ['loadTruck', 'useTruck', 'returnTruck', 'newUserTruck', 'scanTruck', 'transferFromTruck', 'transferToTruck'];
     truckSelects.forEach(selectId => {
         const select = document.getElementById(selectId);
         if (select) {
@@ -536,7 +735,7 @@ function renderTruckMinimumsInputs() {
 }
 
 // ============================================
-// DASHBOARD - LOW STOCK ONLY
+// DASHBOARD - LOW STOCK (USER'S TRUCK FIRST)
 // ============================================
 
 function updateDashboard() {
@@ -545,43 +744,57 @@ function updateDashboard() {
     
     container.innerHTML = '';
     
-    // Shop low stock
-    const shopLow = Object.keys(inventory).filter(id => {
-        const part = inventory[id];
-        return part.shop < part.minStock;
-    });
+    // Get active seasons
+    const activeSeasons = settings.ActiveSeasons ? settings.ActiveSeasons.split(',') : ['heating', 'cooling', 'year-round'];
     
-    if (shopLow.length > 0) {
-        const section = document.createElement('div');
-        section.className = 'low-stock-section';
-        section.innerHTML = '<h3>🏪 Shop - Low Stock</h3>';
-        
-        const grid = document.createElement('div');
-        grid.className = 'low-stock-grid';
-        
-        shopLow.forEach(id => {
+    // User's truck FIRST (if applicable)
+    if (userTruck && trucks[userTruck]) {
+        const truckLow = Object.keys(inventory).filter(id => {
             const part = inventory[id];
-            const item = document.createElement('div');
-            item.className = 'low-stock-item' + (part.shop === 0 ? ' critical' : '');
-            item.innerHTML = `
-                <strong>${part.name}</strong><br>
-                <small>Part #: ${part.id}</small><br>
-                Current: ${part.shop} | Min: ${part.minStock} | Need: ${part.minStock - part.shop}
-            `;
-            item.onclick = () => openPartDetail(id);
-            grid.appendChild(item);
+            const minForTruck = part['minTruck_' + userTruck] || 0;
+            return part[userTruck] < minForTruck && activeSeasons.includes(part.season);
         });
         
-        section.appendChild(grid);
-        container.appendChild(section);
+        if (truckLow.length > 0) {
+            const section = document.createElement('div');
+            section.className = 'low-stock-section';
+            section.innerHTML = `<h3>🚚 ${trucks[userTruck].name} (Your Truck) - Low Stock</h3>`;
+            
+            const grid = document.createElement('div');
+            grid.className = 'low-stock-grid';
+            
+            truckLow.forEach(id => {
+                const part = inventory[id];
+                const minForTruck = part['minTruck_' + userTruck] || 0;
+                const item = document.createElement('div');
+                item.className = 'low-stock-item' + (part[userTruck] === 0 ? ' critical' : '');
+                
+                let imageHTML = '';
+                if (part.imageUrl) {
+                    imageHTML = `<img src="${part.imageUrl}" alt="${part.name}">`;
+                }
+                
+                item.innerHTML = `
+                    ${imageHTML}
+                    <strong>${part.name}</strong><br>
+                    <small>Part #: ${part.id}</small><br>
+                    Current: ${part[userTruck]} | Min: ${minForTruck} | Need: ${minForTruck - part[userTruck]}
+                `;
+                item.onclick = () => openPartDetail(id);
+                grid.appendChild(item);
+            });
+            
+            section.appendChild(grid);
+            container.appendChild(section);
+        }
     }
     
-    // Truck low stock
-    Object.keys(trucks).filter(id => trucks[id].active).forEach(truckId => {
+    // Other trucks
+    Object.keys(trucks).filter(id => trucks[id].active && id !== userTruck).forEach(truckId => {
         const truckLow = Object.keys(inventory).filter(id => {
             const part = inventory[id];
             const minForTruck = part['minTruck_' + truckId] || 0;
-            return part[truckId] < minForTruck;
+            return part[truckId] < minForTruck && activeSeasons.includes(part.season);
         });
         
         if (truckLow.length > 0) {
@@ -597,7 +810,14 @@ function updateDashboard() {
                 const minForTruck = part['minTruck_' + truckId] || 0;
                 const item = document.createElement('div');
                 item.className = 'low-stock-item' + (part[truckId] === 0 ? ' critical' : '');
+                
+                let imageHTML = '';
+                if (part.imageUrl) {
+                    imageHTML = `<img src="${part.imageUrl}" alt="${part.name}">`;
+                }
+                
                 item.innerHTML = `
+                    ${imageHTML}
                     <strong>${part.name}</strong><br>
                     <small>Part #: ${part.id}</small><br>
                     Current: ${part[truckId]} | Min: ${minForTruck} | Need: ${minForTruck - part[truckId]}
@@ -611,65 +831,161 @@ function updateDashboard() {
         }
     });
     
+    // Shop low stock
+    const shopLow = Object.keys(inventory).filter(id => {
+        const part = inventory[id];
+        return part.shop < part.minStock && activeSeasons.includes(part.season);
+    });
+    
+    if (shopLow.length > 0) {
+        const section = document.createElement('div');
+        section.className = 'low-stock-section';
+        section.innerHTML = '<h3>🏪 Shop - Low Stock</h3>';
+        
+        const grid = document.createElement('div');
+        grid.className = 'low-stock-grid';
+        
+        shopLow.forEach(id => {
+            const part = inventory[id];
+            const item = document.createElement('div');
+            item.className = 'low-stock-item' + (part.shop === 0 ? ' critical' : '');
+            
+            let imageHTML = '';
+            if (part.imageUrl) {
+                imageHTML = `<img src="${part.imageUrl}" alt="${part.name}">`;
+            }
+            
+            item.innerHTML = `
+                ${imageHTML}
+                <strong>${part.name}</strong><br>
+                <small>Part #: ${part.id}</small><br>
+                Current: ${part.shop} | Min: ${part.minStock} | Need: ${part.minStock - part.shop}
+            `;
+            item.onclick = () => openPartDetail(id);
+            grid.appendChild(item);
+        });
+        
+        section.appendChild(grid);
+        container.appendChild(section);
+    }
+    
     if (container.children.length === 0) {
         container.innerHTML = '<p style="text-align: center; color: #28a745; font-size: 1.2em; padding: 40px;">✅ All stock levels are good!</p>';
     }
 }
 
 // ============================================
-// ALL PARTS VIEW
+// ALL PARTS VIEW WITH CATEGORIES
 // ============================================
 
-function renderAllParts(filter = '') {
+function renderAllParts(searchTerm = '') {
     const grid = document.getElementById('allPartsGrid');
     if (!grid) return;
     
     grid.innerHTML = '';
     
-    const parts = Object.keys(inventory).filter(id => {
-        if (!filter) return true;
-        const part = inventory[id];
-        return part.name.toLowerCase().includes(filter.toLowerCase()) ||
-               part.id.toLowerCase().includes(filter.toLowerCase());
-    });
+    let parts = Object.keys(inventory);
     
-    parts.forEach(id => {
-        const part = inventory[id];
-        const card = document.createElement('div');
-        card.className = 'part-card';
-        
-        let imageHTML = '';
-        if (part.imageUrl) {
-            imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}">`;
-        } else {
-            imageHTML = '<div class="part-card-placeholder">📦</div>';
+    // Filter by search
+    if (searchTerm) {
+        parts = parts.filter(id => {
+            const part = inventory[id];
+            return part.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                   part.id.toLowerCase().includes(searchTerm.toLowerCase());
+        });
+    }
+    
+    // Filter by category
+    if (currentViewMode === 'category') {
+        if (currentCategoryFilter) {
+            parts = parts.filter(id => {
+                const part = inventory[id];
+                // Check if part is in selected category or child category
+                if (part.category === currentCategoryFilter) return true;
+                if (categories[part.category] && categories[part.category].parent) {
+                    const parentId = Object.keys(categories).find(catId => 
+                        categories[catId].name === categories[part.category].parent
+                    );
+                    return parentId === currentCategoryFilter;
+                }
+                return false;
+            });
         }
         
-        // Check stock status
-        let shopStatus = 'stock-ok';
-        if (part.shop < part.minStock) shopStatus = 'stock-low';
-        if (part.shop === 0) shopStatus = 'stock-out';
+        // Group by category
+        const grouped = {};
+        parts.forEach(id => {
+            const part = inventory[id];
+            const catId = part.category || 'other';
+            if (!grouped[catId]) grouped[catId] = [];
+            grouped[catId].push(id);
+        });
         
-        card.innerHTML = `
-            ${imageHTML}
-            <div class="part-card-name">${part.name}</div>
-            <div class="part-card-number">Part #: ${part.id}</div>
-            <div class="part-card-stock">
-                <span class="stock-badge ${shopStatus}">Shop: ${part.shop}</span>
-            </div>
-        `;
-        
-        card.onclick = () => openPartDetail(id);
-        grid.appendChild(card);
-    });
+        // Render by category
+        Object.keys(grouped).sort((a, b) => {
+            const nameA = categories[a]?.name || 'Other';
+            const nameB = categories[b]?.name || 'Other';
+            return nameA.localeCompare(nameB);
+        }).forEach(catId => {
+            const catName = categories[catId]?.name || 'Other';
+            const h3 = document.createElement('h3');
+            h3.textContent = catName;
+            h3.style.gridColumn = '1 / -1';
+            h3.style.marginTop = '20px';
+            h3.style.marginBottom = '10px';
+            grid.appendChild(h3);
+            
+            grouped[catId].sort((a, b) => {
+                return inventory[a].name.localeCompare(inventory[b].name);
+            }).forEach(id => {
+                grid.appendChild(createPartCard(id));
+            });
+        });
+    } else {
+        // Show all alphabetically
+        parts.sort((a, b) => {
+            return inventory[a].name.localeCompare(inventory[b].name);
+        }).forEach(id => {
+            grid.appendChild(createPartCard(id));
+        });
+    }
     
     if (parts.length === 0) {
         grid.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No parts found</p>';
     }
 }
 
-function filterAllParts(searchTerm) {
-    renderAllParts(searchTerm);
+function createPartCard(partId) {
+    const part = inventory[partId];
+    const card = document.createElement('div');
+    card.className = 'part-card';
+    
+    let imageHTML = '';
+    if (part.imageUrl) {
+        imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                     <div class="part-card-placeholder" style="display: none;">📦</div>`;
+    } else {
+        imageHTML = '<div class="part-card-placeholder">📦</div>';
+    }
+    
+    let shopStatus = 'stock-ok';
+    if (part.shop < part.minStock) shopStatus = 'stock-low';
+    if (part.shop === 0) shopStatus = 'stock-out';
+    
+    const categoryName = categories[part.category]?.name || 'Other';
+    
+    card.innerHTML = `
+        ${imageHTML}
+        <div class="part-card-name">${part.name}</div>
+        <div class="part-card-number">Part #: ${part.id}</div>
+        <div class="part-card-category">${categoryName}</div>
+        <div class="part-card-stock">
+            <span class="stock-badge ${shopStatus}">Shop: ${part.shop}</span>
+        </div>
+    `;
+    
+    card.onclick = () => openPartDetail(partId);
+    return card;
 }
 
 // ============================================
@@ -696,11 +1012,17 @@ function renderPartModalList(filter = '') {
     const body = document.getElementById('partModalBody');
     body.innerHTML = '';
     
-    // Filter based on context
     let parts = Object.keys(inventory);
     
+    // Filter based on context
     if (currentPartModalContext === 'use' || currentPartModalContext === 'return') {
-        const truck = document.getElementById(currentPartModalContext === 'use' ? 'useTruck' : 'returnTruck').value;
+        const truckSelect = currentPartModalContext === 'use' ? 'useTruck' : 'returnTruck';
+        const truck = document.getElementById(truckSelect).value;
+        if (truck) {
+            parts = parts.filter(id => inventory[id][truck] > 0);
+        }
+    } else if (currentPartModalContext === 'transfer') {
+        const truck = document.getElementById('transferFromTruck').value;
         if (truck) {
             parts = parts.filter(id => inventory[id][truck] > 0);
         }
@@ -711,21 +1033,23 @@ function renderPartModalList(filter = '') {
         parts = parts.filter(id => {
             const part = inventory[id];
             return part.name.toLowerCase().includes(filter.toLowerCase()) ||
-                   part.id.toLowerCase().includes(filter.toLowerCase());
+                   part.id.toLowerCase().includes(filter.toLowerCase()) ||
+                   part.barcode.toLowerCase().includes(filter.toLowerCase());
         });
     }
     
     const grid = document.createElement('div');
     grid.className = 'parts-grid';
     
-    parts.forEach(id => {
+    parts.sort((a, b) => inventory[a].name.localeCompare(inventory[b].name)).forEach(id => {
         const part = inventory[id];
         const card = document.createElement('div');
         card.className = 'part-card';
         
         let imageHTML = '';
         if (part.imageUrl) {
-            imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}">`;
+            imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                         <div class="part-card-placeholder" style="display: none;">📦</div>`;
         } else {
             imageHTML = '<div class="part-card-placeholder">📦</div>';
         }
@@ -755,14 +1079,13 @@ function selectPart(partId) {
     const part = inventory[partId];
     selectedParts[currentPartModalContext] = partId;
     
-    // Update display
     const displayId = currentPartModalContext + 'PartDisplay';
     const display = document.getElementById(displayId);
     
     if (display) {
         let imageHTML = '';
         if (part.imageUrl) {
-            imageHTML = `<img src="${part.imageUrl}" class="selected-part-image" alt="${part.name}">`;
+            imageHTML = `<img src="${part.imageUrl}" class="selected-part-image" alt="${part.name}" onerror="this.style.display='none';">`;
         }
         
         display.innerHTML = `
@@ -787,7 +1110,7 @@ function clearSelectedPart(context) {
 }
 
 // ============================================
-// PART DETAIL MODAL
+// PART DETAIL MODAL WITH HISTORY
 // ============================================
 
 function openPartDetail(partId) {
@@ -799,7 +1122,7 @@ function openPartDetail(partId) {
     
     let imageHTML = '';
     if (part.imageUrl) {
-        imageHTML = `<img src="${part.imageUrl}" style="max-width: 200px; max-height: 200px; border-radius: 12px; margin-bottom: 20px;">`;
+        imageHTML = `<img src="${part.imageUrl}" style="max-width: 200px; max-height: 200px; border-radius: 12px; margin-bottom: 20px;" onerror="this.style.display='none';">`;
     }
     
     let stockHTML = '<h3>Current Stock</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px;">';
@@ -812,9 +1135,9 @@ function openPartDetail(partId) {
     stockHTML += '</div>';
     
     let actionsHTML = '<h3>Quick Actions</h3><div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">';
-    actionsHTML += `<button class="btn btn-primary" onclick="movePartToLocation('${partId}', 'shop')">📥 Receive to Shop</button>`;
+    actionsHTML += `<button class="btn btn-primary" onclick="quickReceive('${partId}')">📥 Receive to Shop</button>`;
     Object.keys(trucks).filter(id => trucks[id].active).forEach(truckId => {
-        actionsHTML += `<button class="btn btn-secondary" onclick="movePartToTruck('${partId}', '${truckId}')">📦 To ${trucks[truckId].name}</button>`;
+        actionsHTML += `<button class="btn btn-secondary" onclick="quickLoadToTruck('${partId}', '${truckId}')">📦 To ${trucks[truckId].name}</button>`;
     });
     actionsHTML += '</div>';
     
@@ -824,6 +1147,22 @@ function openPartDetail(partId) {
     infoHTML += `<p><strong>Barcode:</strong> ${part.barcode || 'N/A'}</p>`;
     infoHTML += `<p><strong>Season:</strong> ${part.season}</p>`;
     if (part.price > 0) infoHTML += `<p><strong>Price:</strong> $${part.price.toFixed(2)}</p>`;
+    if (part.purchaseLink) infoHTML += `<p><strong>Purchase:</strong> <a href="${part.purchaseLink}" target="_blank">Link</a></p>`;
+    
+    // Add history for this part
+    const partHistory = history.filter(h => h.details && h.details.includes(part.name)).slice(0, 10);
+    if (partHistory.length > 0) {
+        infoHTML += '<h3 style="margin-top: 20px;">Recent History</h3>';
+        partHistory.forEach(h => {
+            infoHTML += `
+                <div class="history-item" style="margin-bottom: 8px;">
+                    <strong>${h.action}</strong> - ${h.details}
+                    <span class="tech-badge">${h.tech}</span><br>
+                    <small style="color: #666;">📅 ${h.timestamp}</small>
+                </div>
+            `;
+        });
+    }
     
     body.innerHTML = imageHTML + stockHTML + actionsHTML + infoHTML;
     
@@ -834,12 +1173,11 @@ function closePartDetailModal() {
     document.getElementById('partDetailModal').classList.remove('show');
 }
 
-async function movePartToLocation(partId, location) {
+async function quickReceive(partId) {
     const qty = prompt('Enter quantity to receive:');
     if (!qty || isNaN(qty) || parseInt(qty) <= 0) return;
     
     showProcessing(true);
-    
     await loadInventory();
     const part = inventory[partId];
     
@@ -878,12 +1216,11 @@ async function movePartToLocation(partId, location) {
     }
 }
 
-async function movePartToTruck(partId, truckId) {
+async function quickLoadToTruck(partId, truckId) {
     const qty = prompt(`Enter quantity to load onto ${trucks[truckId].name}:`);
     if (!qty || isNaN(qty) || parseInt(qty) <= 0) return;
     
     showProcessing(true);
-    
     await loadInventory();
     const part = inventory[partId];
     
@@ -932,63 +1269,6 @@ async function movePartToTruck(partId, truckId) {
 // ============================================
 // QUICK ACTIONS
 // ============================================
-
-async function loadTruck() {
-    const partId = selectedParts.load;
-    const qty = parseInt(document.getElementById('loadQty').value);
-    const truck = document.getElementById('loadTruck').value;
-    
-    if (!partId) {
-        showToast('Select a part', 'error');
-        return;
-    }
-    
-    showProcessing(true);
-    await loadInventory();
-    
-    const part = inventory[partId];
-    if (part.shop < qty) {
-        showProcessing(false);
-        showToast(`Only ${part.shop} available in shop`, 'error');
-        return;
-    }
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
-                    shop: part.shop - qty,
-                    [truck]: part[truck] + qty
-                }
-            })
-        });
-        
-        await addTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Loaded Truck',
-            details: `${part.name}: ${qty} loaded onto ${trucks[truck].name}`,
-            quantity: qty,
-            from: 'Shop',
-            to: trucks[truck].name
-        });
-        
-        await loadInventory();
-        document.getElementById('loadQty').value = '1';
-        clearSelectedPart('load');
-        updateDashboard();
-        showProcessing(false);
-        showToast('Truck loaded!');
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error loading truck', 'error');
-    }
-}
 
 async function useParts() {
     const truck = document.getElementById('useTruck').value;
@@ -1049,6 +1329,63 @@ async function useParts() {
     }
 }
 
+async function loadTruck() {
+    const partId = selectedParts.load;
+    const qty = parseInt(document.getElementById('loadQty').value);
+    const truck = document.getElementById('loadTruck').value;
+    
+    if (!partId) {
+        showToast('Select a part', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    await loadInventory();
+    
+    const part = inventory[partId];
+    if (part.shop < qty) {
+        showProcessing(false);
+        showToast(`Only ${part.shop} available in shop`, 'error');
+        return;
+    }
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    shop: part.shop - qty,
+                    [truck]: part[truck] + qty
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Loaded Truck',
+            details: `${part.name}: ${qty} loaded onto ${trucks[truck].name}`,
+            quantity: qty,
+            from: 'Shop',
+            to: trucks[truck].name
+        });
+        
+        await loadInventory();
+        document.getElementById('loadQty').value = '1';
+        clearSelectedPart('load');
+        updateDashboard();
+        showProcessing(false);
+        showToast('Truck loaded!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error loading truck', 'error');
+    }
+}
+
 async function returnToShop() {
     const truck = document.getElementById('returnTruck').value;
     const partId = selectedParts.return;
@@ -1106,6 +1443,69 @@ async function returnToShop() {
     }
 }
 
+async function transferParts() {
+    const fromTruck = document.getElementById('transferFromTruck').value;
+    const toTruck = document.getElementById('transferToTruck').value;
+    const partId = selectedParts.transfer;
+    const qty = parseInt(document.getElementById('transferQty').value);
+    
+    if (!partId) {
+        showToast('Select a part', 'error');
+        return;
+    }
+    
+    if (fromTruck === toTruck) {
+        showToast('Cannot transfer to same truck', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    await loadInventory();
+    
+    const part = inventory[partId];
+    if (part[fromTruck] < qty) {
+        showProcessing(false);
+        showToast(`Only ${part[fromTruck]} available on ${trucks[fromTruck].name}`, 'error');
+        return;
+    }
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    [fromTruck]: part[fromTruck] - qty,
+                    [toTruck]: part[toTruck] + qty
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Transferred',
+            details: `${part.name}: ${qty} from ${trucks[fromTruck].name} to ${trucks[toTruck].name}`,
+            quantity: qty,
+            from: trucks[fromTruck].name,
+            to: trucks[toTruck].name
+        });
+        
+        await loadInventory();
+        document.getElementById('transferQty').value = '1';
+        clearSelectedPart('transfer');
+        updateDashboard();
+        showProcessing(false);
+        showToast('Transfer complete!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error transferring', 'error');
+    }
+}
+
 async function receiveStock() {
     const partId = selectedParts.receive;
     const qty = parseInt(document.getElementById('receiveQty').value);
@@ -1157,6 +1557,226 @@ async function receiveStock() {
 }
 
 // ============================================
+// BARCODE SCANNER - CAMERA
+// ============================================
+
+function startCameraBarcodeScanner(targetInputId) {
+    currentBarcodeTarget = targetInputId;
+    const modal = document.getElementById('barcodeScannerModal');
+    modal.classList.add('show');
+    
+    const video = document.getElementById('barcodeScannerVideo');
+    
+    if (!codeReader) {
+        showToast('Barcode scanner not available', 'error');
+        return;
+    }
+    
+    codeReader.decodeFromVideoDevice(null, video, (result, err) => {
+        if (result) {
+            const code = result.text;
+            
+            // Prevent duplicate scans
+            const now = Date.now();
+            if (code === lastScannedCode && now - lastScanTime < 2000) {
+                return;
+            }
+            
+            lastScannedCode = code;
+            lastScanTime = now;
+            
+            // Set the input value
+            const input = document.getElementById(targetInputId);
+            if (input) {
+                input.value = code;
+            }
+            
+            showToast('Barcode scanned!');
+            stopCameraBarcodeScanner();
+        }
+    });
+}
+
+function stopCameraBarcodeScanner() {
+    if (codeReader) {
+        codeReader.reset();
+    }
+    document.getElementById('barcodeScannerModal').classList.remove('show');
+    currentBarcodeTarget = null;
+}
+
+// ============================================
+// BARCODE SCANNER - PHYSICAL SCANNER
+// ============================================
+
+async function handlePhysicalScannerInput(barcode) {
+    console.log('Physical scanner input:', barcode);
+    
+    // Try to find part by barcode
+    const partId = Object.keys(inventory).find(id => inventory[id].barcode === barcode);
+    
+    if (!partId) {
+        showToast('Part not found for barcode: ' + barcode, 'error');
+        return;
+    }
+    
+    const part = inventory[partId];
+    
+    if (!scanModeActive) {
+        // Not in scan mode - just show the part
+        openPartDetail(partId);
+        return;
+    }
+    
+    // In scan mode - perform the action
+    const action = document.getElementById('scanAction').value;
+    const truck = document.getElementById('scanTruck').value;
+    const jobName = document.getElementById('scanJobName').value.trim() || 'Job';
+    
+    if (!action || !truck) {
+        showToast('Select action and truck first', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    await loadInventory();
+    const updatedPart = inventory[partId];
+    
+    try {
+        if (action === 'use') {
+            if (updatedPart[truck] < 1) {
+                showProcessing(false);
+                showToast(`No ${part.name} on ${trucks[truck].name}`, 'error');
+                return;
+            }
+            
+            await fetch(SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                    action: 'updatePartQuantity',
+                    partId: partId,
+                    updates: {
+                        [truck]: updatedPart[truck] - 1
+                    }
+                })
+            });
+            
+            await addTransaction({
+                timestamp: new Date().toLocaleString(),
+                tech: currentUser,
+                action: 'Used on Job (Scan)',
+                details: `${part.name}: 1 used from ${trucks[truck].name}`,
+                quantity: 1,
+                from: trucks[truck].name,
+                to: 'Customer',
+                jobName: jobName
+            });
+            
+            showToast(`✅ ${part.name} used (${updatedPart[truck] - 1} left)`);
+            
+        } else if (action === 'load') {
+            if (updatedPart.shop < 1) {
+                showProcessing(false);
+                showToast(`No ${part.name} in shop`, 'error');
+                return;
+            }
+            
+            await fetch(SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                    action: 'updatePartQuantity',
+                    partId: partId,
+                    updates: {
+                        shop: updatedPart.shop - 1,
+                        [truck]: updatedPart[truck] + 1
+                    }
+                })
+            });
+            
+            await addTransaction({
+                timestamp: new Date().toLocaleString(),
+                tech: currentUser,
+                action: 'Loaded Truck (Scan)',
+                details: `${part.name}: 1 loaded onto ${trucks[truck].name}`,
+                quantity: 1,
+                from: 'Shop',
+                to: trucks[truck].name
+            });
+            
+            showToast(`✅ ${part.name} loaded (${updatedPart[truck] + 1} on truck)`);
+            
+        } else if (action === 'return') {
+            if (updatedPart[truck] < 1) {
+                showProcessing(false);
+                showToast(`No ${part.name} on ${trucks[truck].name}`, 'error');
+                return;
+            }
+            
+            await fetch(SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                    action: 'updatePartQuantity',
+                    partId: partId,
+                    updates: {
+                        [truck]: updatedPart[truck] - 1,
+                        shop: updatedPart.shop + 1
+                    }
+                })
+            });
+            
+            await addTransaction({
+                timestamp: new Date().toLocaleString(),
+                tech: currentUser,
+                action: 'Returned to Shop (Scan)',
+                details: `${part.name}: 1 returned from ${trucks[truck].name}`,
+                quantity: 1,
+                from: trucks[truck].name,
+                to: 'Shop'
+            });
+            
+            showToast(`✅ ${part.name} returned (${updatedPart.shop + 1} in shop)`);
+            
+        } else if (action === 'receive') {
+            await fetch(SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                    action: 'updatePartQuantity',
+                    partId: partId,
+                    updates: {
+                        shop: updatedPart.shop + 1
+                    }
+                })
+            });
+            
+            await addTransaction({
+                timestamp: new Date().toLocaleString(),
+                tech: currentUser,
+                action: 'Received Stock (Scan)',
+                details: `${part.name}: 1 received to shop`,
+                quantity: 1,
+                from: 'Supplier',
+                to: 'Shop'
+            });
+            
+            showToast(`✅ ${part.name} received (${updatedPart.shop + 1} in shop)`);
+        }
+        
+        await loadInventory();
+        updateDashboard();
+        showProcessing(false);
+        
+    } catch (error) {
+        showProcessing(false);
+        console.error('Scan action error:', error);
+        showToast('Error processing scan', 'error');
+    }
+}
+
+// ============================================
 // QUICK LOAD / RESTOCK
 // ============================================
 
@@ -1171,8 +1791,8 @@ async function updateQuickLoadList() {
         return;
     }
     
-    // Get selected seasons
-    const selectedSeasons = Array.from(document.querySelectorAll('.season-checkbox:checked')).map(cb => cb.value);
+    // Get active seasons
+    const activeSeasons = settings.ActiveSeasons ? settings.ActiveSeasons.split(',') : ['heating', 'cooling', 'year-round'];
     
     showProcessing(true);
     
@@ -1189,10 +1809,10 @@ async function updateQuickLoadList() {
         
         let items = location === 'shop' ? result.data.shop : (result.data.trucks[location] || []);
         
-        // Filter by season
+        // Filter by active seasons
         items = items.filter(item => {
             const part = inventory[item.id];
-            return part && selectedSeasons.includes(part.season);
+            return part && activeSeasons.includes(part.season);
         });
         
         if (items.length === 0) {
@@ -1210,7 +1830,7 @@ async function updateQuickLoadList() {
             
             let imageHTML = '';
             if (part.imageUrl) {
-                imageHTML = `<img src="${part.imageUrl}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 8px;">`;
+                imageHTML = `<img src="${part.imageUrl}" class="quick-load-image" onerror="this.style.display='none';">`;
             } else {
                 imageHTML = '<div style="width: 60px; height: 60px; background: #f0f0f0; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 2em;">📦</div>';
             }
@@ -1312,11 +1932,11 @@ async function processQuickLoad() {
         updateDashboard();
         await updateQuickLoadList();
         showProcessing(false);
-        showToast('Restock complete!');
+        showToast('Quick Load complete!');
     } catch (error) {
         showProcessing(false);
         console.error('Error:', error);
-        showToast('Error processing restock', 'error');
+        showToast('Error processing quick load', 'error');
     }
 }
 
@@ -1478,6 +2098,121 @@ function clearImageUpload() {
 }
 
 // ============================================
+// CATEGORIES
+// ============================================
+
+function renderCategoryTree() {
+    const container = document.getElementById('categoryTree');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    
+    // Get root categories
+    const rootCategories = Object.keys(categories).filter(id => !categories[id].parent);
+    
+    rootCategories.sort((a, b) => {
+        return categories[a].name.localeCompare(categories[b].name);
+    }).forEach(rootId => {
+        const rootDiv = document.createElement('div');
+        rootDiv.className = 'category-tree-item';
+        rootDiv.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <strong>${categories[rootId].name}</strong>
+                <button class="btn btn-danger" style="padding: 5px 10px;" onclick="deleteCategory('${rootId}')">Delete</button>
+            </div>
+        `;
+        
+        // Add children
+        const children = Object.keys(categories).filter(id => {
+            return categories[id].parent && 
+                   Object.keys(categories).find(parentId => 
+                       categories[parentId].name === categories[id].parent
+                   ) === rootId;
+        });
+        
+        children.sort((a, b) => {
+            return categories[a].name.localeCompare(categories[b].name);
+        }).forEach(childId => {
+            const childDiv = document.createElement('div');
+            childDiv.className = 'category-tree-child';
+            childDiv.innerHTML = `
+                <div class="category-tree-item">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>↳ ${categories[childId].name}</span>
+                        <button class="btn btn-danger" style="padding: 5px 10px;" onclick="deleteCategory('${childId}')">Delete</button>
+                    </div>
+                </div>
+            `;
+            rootDiv.appendChild(childDiv);
+        });
+        
+        container.appendChild(rootDiv);
+    });
+}
+
+async function addCategory() {
+    const name = document.getElementById('newCategoryName').value.trim();
+    const parent = document.getElementById('newCategoryParent').value;
+    
+    if (!name) {
+        showToast('Enter category name', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'saveCategory',
+                name: name,
+                parentName: parent,
+                order: Object.keys(categories).length
+            })
+        });
+        
+        await loadCategories();
+        document.getElementById('newCategoryName').value = '';
+        document.getElementById('newCategoryParent').value = '';
+        renderCategoryTree();
+        populateDropdowns();
+        showProcessing(false);
+        showToast('Category added!');
+    } catch (error) {
+        showProcessing(false);
+        showToast('Error adding category', 'error');
+    }
+}
+
+async function deleteCategory(id) {
+    if (!confirm('Delete this category? Parts in this category will be set to "Other".')) return;
+    
+    showProcessing(true);
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'deleteCategory',
+                name: categories[id].name
+            })
+        });
+        
+        await loadCategories();
+        renderCategoryTree();
+        populateDropdowns();
+        showProcessing(false);
+        showToast('Category deleted!');
+    } catch (error) {
+        showProcessing(false);
+        showToast('Error deleting category', 'error');
+    }
+}
+
+// ============================================
 // HISTORY
 // ============================================
 
@@ -1492,7 +2227,7 @@ function updateHistory() {
     
     const displayHistory = isOwner ? history : history.filter(e => e.tech === currentUser);
     
-    list.innerHTML = displayHistory.slice(0, 50).map(e => `
+    list.innerHTML = displayHistory.slice(0, 100).map(e => `
         <div class="history-item">
             <strong>${e.action}</strong> - ${e.details}
             <span class="tech-badge">${e.tech}</span><br>
@@ -1502,31 +2237,113 @@ function updateHistory() {
 }
 
 // ============================================
-// SETTINGS (ADMIN)
+// SETTINGS
 // ============================================
 
 function updateSettings() {
     populateDropdowns();
-    updateCategoryList();
     updateTruckList();
     updateUserList();
+    
+    // Load active seasons
+    const activeSeasons = settings.ActiveSeasons ? settings.ActiveSeasons.split(',') : ['heating', 'cooling', 'year-round'];
+    document.querySelectorAll('.active-season-cb').forEach(cb => {
+        cb.checked = activeSeasons.includes(cb.value);
+    });
+    
+    // Show/hide PIN change based on permission
+    const changePinBtn = document.getElementById('changePinBtn');
+    if (changePinBtn) {
+        changePinBtn.style.display = (isOwner || canEditPIN) ? 'block' : 'none';
+    }
 }
 
-function updateCategoryList() {
-    const list = document.getElementById('categoryList');
-    if (!list) return;
+async function saveActiveSeasons() {
+    const selected = Array.from(document.querySelectorAll('.active-season-cb:checked')).map(cb => cb.value);
     
-    list.innerHTML = '';
-    Object.keys(categories).sort((a, b) => categories[a].name.localeCompare(categories[b].name)).forEach(id => {
-        const cat = categories[id];
-        const div = document.createElement('div');
-        div.style.cssText = 'padding: 10px; background: #f8f9fa; border-radius: 8px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;';
-        div.innerHTML = `
-            <span>${cat.name}</span>
-            <button class="btn btn-danger" style="padding: 5px 10px;" onclick="deleteCategory('${id}')">Delete</button>
-        `;
-        list.appendChild(div);
-    });
+    if (selected.length === 0) {
+        showToast('Select at least one season', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'saveSetting',
+                setting: 'ActiveSeasons',
+                value: selected.join(',')
+            })
+        });
+        
+        await loadSettings();
+        updateDashboard();
+        showProcessing(false);
+        showToast('Seasons updated!');
+    } catch (error) {
+        showProcessing(false);
+        showToast('Error saving seasons', 'error');
+    }
+}
+
+async function changePIN() {
+    if (!isOwner && !canEditPIN) {
+        showToast('You do not have permission to change PIN', 'error');
+        return;
+    }
+    
+    const oldPIN = prompt('Enter your current PIN:');
+    if (oldPIN !== currentUserPin) {
+        showToast('Incorrect current PIN', 'error');
+        return;
+    }
+    
+    const newPIN = prompt('Enter new 4-digit PIN:');
+    if (!newPIN || newPIN.length !== 4 || !/^\d+$/.test(newPIN)) {
+        showToast('PIN must be 4 digits', 'error');
+        return;
+    }
+    
+    const confirmPIN = prompt('Confirm new PIN:');
+    if (newPIN !== confirmPIN) {
+        showToast('PINs do not match', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    try {
+        // Check if new PIN already exists
+        await fetch(SCRIPT_URL + '?action=readUsers').then(r => r.json()).then(result => {
+            if (result.success && result.data) {
+                for (let i = 1; i < result.data.length; i++) {
+                    if (result.data[i][0] === newPIN) {
+                        throw new Error('PIN already in use');
+                    }
+                }
+            }
+        });
+        
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'changePIN',
+                oldPIN: currentUserPin,
+                newPIN: newPIN
+            })
+        });
+        
+        currentUserPin = newPIN;
+        showProcessing(false);
+        showToast('PIN changed successfully!');
+    } catch (error) {
+        showProcessing(false);
+        showToast(error.message || 'Error changing PIN', 'error');
+    }
 }
 
 function updateTruckList() {
@@ -1559,65 +2376,11 @@ function updateUserList() {
         const div = document.createElement('div');
         div.style.cssText = 'padding: 10px; background: #f8f9fa; border-radius: 8px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;';
         div.innerHTML = `
-            <span>${user.name}${user.isOwner ? ' 👑' : ''} - Truck: ${trucks[user.truck]?.name || 'N/A'}</span>
+            <span>${user.name}${user.isOwner ? ' 👑' : ''} - Truck: ${trucks[user.truck]?.name || 'N/A'}${user.canEditPIN ? ' 🔑' : ''}</span>
             ${!user.isOwner ? `<button class="btn btn-danger" style="padding: 5px 10px;" onclick="deleteUser('${pin}')">Delete</button>` : ''}
         `;
         list.appendChild(div);
     });
-}
-
-async function addCategory() {
-    const name = document.getElementById('newCategoryName').value.trim();
-    if (!name) return;
-    
-    showProcessing(true);
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'saveCategory',
-                name: name,
-                parentName: '',
-                order: Object.keys(categories).length
-            })
-        });
-        
-        await loadCategories();
-        document.getElementById('newCategoryName').value = '';
-        updateSettings();
-        showProcessing(false);
-        showToast('Category added!');
-    } catch (error) {
-        showProcessing(false);
-        showToast('Error adding category', 'error');
-    }
-}
-
-async function deleteCategory(id) {
-    if (!confirm('Delete this category?')) return;
-    
-    showProcessing(true);
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'deleteCategory',
-                name: categories[id].name
-            })
-        });
-        
-        await loadCategories();
-        updateSettings();
-        showProcessing(false);
-        showToast('Category deleted!');
-    } catch (error) {
-        showProcessing(false);
-        showToast('Error deleting category', 'error');
-    }
 }
 
 async function addTruck() {
@@ -1685,7 +2448,7 @@ async function toggleTruck(id) {
 }
 
 async function deleteTruck(id) {
-    if (!confirm('Delete this truck? All parts on it will be lost.')) return;
+    if (!confirm('Delete this truck? All parts on it will be returned to shop.')) return;
     
     showProcessing(true);
     
@@ -1742,7 +2505,8 @@ async function addUser() {
                 pin: pin,
                 name: name,
                 truck: truck,
-                isOwner: false
+                isOwner: false,
+                canEditPIN: false
             })
         });
         
@@ -1756,7 +2520,8 @@ async function addUser() {
                     users[row[0]] = {
                         name: row[1],
                         truck: row[2],
-                        isOwner: (row[3] === 'TRUE' || row[3] === true)
+                        isOwner: (row[3] === 'TRUE' || row[3] === true),
+                        canEditPIN: (row[4] === 'TRUE' || row[4] === true)
                     };
                 }
             }
