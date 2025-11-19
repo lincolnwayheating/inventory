@@ -985,7 +985,7 @@ function createCategoryCard(catId) {
     return categories[id].parent === catId;
 }).length;
     
-    const icon = subcatCount > 0 ? '📁' : '📦';
+    const icon = subcatCount > 0 ? '📂' : '📦';  // Open folder for categories with subs
     
     card.innerHTML = `
         <div class="category-icon">${icon}</div>
