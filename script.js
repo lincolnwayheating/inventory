@@ -990,7 +990,7 @@ function createCategoryCard(catId) {
     card.innerHTML = `
         <div class="category-icon">${icon}</div>
         <div class="category-name">${cat.name}</div>
-        <div class="category-count">${totalParts} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
+        <div class="category-count">${partCount} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
     `;
     
     card.onclick = () => {
