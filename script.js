@@ -956,11 +956,6 @@ function renderAllParts(searchTerm = '') {
         grid.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No parts found</p>';
     }
 }
-    
-    if (parts.length === 0) {
-        grid.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No parts found</p>';
-    }
-}
 
 function createPartCard(partId) {
     const part = inventory[partId];
