@@ -878,23 +878,194 @@ function updateDashboard() {
 // ALL PARTS VIEW WITH CATEGORIES
 // ============================================
 
+// Current category browsing state
+let currentBrowsingCategory = null;
+
 function renderAllParts(searchTerm = '') {
     const grid = document.getElementById('allPartsGrid');
+    const browser = document.getElementById('categoryBrowser');
+    const navGrid = document.getElementById('categoryNavGrid');
+    
     if (!grid) return;
     
     grid.innerHTML = '';
     
+    // If in browse mode and not searching
+    if (currentViewMode === 'browse' && !searchTerm) {
+        browser.style.display = 'block';
+        
+        // Show breadcrumb
+        updateBreadcrumb();
+        
+        // If no category selected, show root categories
+        if (!currentBrowsingCategory) {
+            navGrid.innerHTML = '';
+            
+            // Get root categories
+            const rootCategories = Object.keys(categories)
+                .filter(id => !categories[id].parent)
+                .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
+            
+            rootCategories.forEach(catId => {
+                const card = createCategoryCard(catId);
+                navGrid.appendChild(card);
+            });
+            
+            // Don't show parts grid when browsing categories
+            grid.style.display = 'none';
+            return;
+        } else {
+            // Show subcategories + parts for selected category
+            navGrid.innerHTML = '';
+            
+            // Get subcategories
+            const subcategories = Object.keys(categories)
+                .filter(id => {
+                    const parent = categories[id].parent;
+                    if (!parent) return false;
+                    // Find parent ID by name
+                    const parentId = Object.keys(categories).find(pid => categories[pid].name === parent);
+                    return parentId === currentBrowsingCategory;
+                })
+                .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
+            
+            subcategories.forEach(catId => {
+                const card = createCategoryCard(catId);
+                navGrid.appendChild(card);
+            });
+            
+            // Show parts in this category and subcategories
+            grid.style.display = 'grid';
+            let parts = getPartsInCategory(currentBrowsingCategory);
+            
+            if (parts.length === 0) {
+                grid.innerHTML = '<p style="text-align: center; color: #666; padding: 40px; grid-column: 1 / -1;">No parts in this category</p>';
+            } else {
+                parts.sort((a, b) => inventory[a].name.localeCompare(inventory[b].name));
+                parts.forEach(id => grid.appendChild(createPartCard(id)));
+            }
+            return;
+        }
+    } else {
+        // Hide category browser when showing all or searching
+        browser.style.display = 'none';
+        grid.style.display = 'grid';
+    }
+    
+    // Show all parts (with optional search)
     let parts = Object.keys(inventory);
     
-// Filter by search
-if (searchTerm && searchTerm.trim() !== '') {
-    const search = searchTerm.toLowerCase().trim();
-    parts = parts.filter(id => {
-        const part = inventory[id];
-        return part.name.toLowerCase().includes(search) ||
-               String(part.id).toLowerCase().includes(search) ||
-               (part.barcode && String(part.barcode).toLowerCase().includes(search));  // ✅ FIXED
+    // Filter by search
+    if (searchTerm && searchTerm.trim() !== '') {
+        const search = searchTerm.toLowerCase().trim();
+        parts = parts.filter(id => {
+            const part = inventory[id];
+            return part.name.toLowerCase().includes(search) ||
+                   String(part.id).toLowerCase().includes(search) ||
+                   (part.barcode && String(part.barcode).toLowerCase().includes(search));
+        });
+    }
+    
+    // Show all alphabetically
+    parts.sort((a, b) => {
+        return inventory[a].name.localeCompare(inventory[b].name);
     });
+    
+    parts.forEach(id => {
+        grid.appendChild(createPartCard(id));
+    });
+    
+    if (parts.length === 0) {
+        grid.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No parts found</p>';
+    }
+}
+
+function createCategoryCard(catId) {
+    const cat = categories[catId];
+    const card = document.createElement('div');
+    card.className = 'category-nav-card';
+    
+    // Count parts in this category (including subcategories)
+    const partCount = getPartsInCategory(catId).length;
+    
+    // Count subcategories
+    const subcatCount = Object.keys(categories).filter(id => {
+        const parent = categories[id].parent;
+        if (!parent) return false;
+        const parentId = Object.keys(categories).find(pid => categories[pid].name === parent);
+        return parentId === catId;
+    }).length;
+    
+    const icon = subcatCount > 0 ? '📁' : '📦';
+    
+    card.innerHTML = `
+        <div class="category-icon">${icon}</div>
+        <div class="category-name">${cat.name}</div>
+        <div class="category-count">${partCount} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
+    `;
+    
+    card.onclick = () => {
+        currentBrowsingCategory = catId;
+        renderAllParts();
+    };
+    
+    return card;
+}
+
+function getPartsInCategory(categoryId) {
+    // Get all parts in this category and its subcategories
+    const categoryIds = [categoryId];
+    
+    // Add all subcategories recursively
+    const addSubcategories = (parentId) => {
+        Object.keys(categories).forEach(id => {
+            const parent = categories[id].parent;
+            if (parent) {
+                const parentCatId = Object.keys(categories).find(pid => categories[pid].name === parent);
+                if (parentCatId === parentId && !categoryIds.includes(id)) {
+                    categoryIds.push(id);
+                    addSubcategories(id);
+                }
+            }
+        });
+    };
+    
+    addSubcategories(categoryId);
+    
+    // Get all parts in these categories
+    return Object.keys(inventory).filter(partId => {
+        return categoryIds.includes(inventory[partId].category);
+    });
+}
+
+function updateBreadcrumb() {
+    const breadcrumb = document.getElementById('categoryBreadcrumb');
+    if (!breadcrumb) return;
+    
+    if (!currentBrowsingCategory) {
+        breadcrumb.innerHTML = '<span>📁 All Categories</span>';
+        return;
+    }
+    
+    // Build breadcrumb trail
+    const trail = [];
+    let currentId = currentBrowsingCategory;
+    
+    while (currentId) {
+        trail.unshift({ id: currentId, name: categories[currentId].name });
+        
+        const parent = categories[currentId].parent;
+        if (parent) {
+            currentId = Object.keys(categories).find(id => categories[id].name === parent);
+        } else {
+            currentId = null;
+        }
+    }
+    
+    breadcrumb.innerHTML = `
+        <a class="breadcrumb-link" onclick="currentBrowsingCategory = null; renderAllParts();">📁 All Categories</a>
+        ${trail.map(item => ` > <a class="breadcrumb-link" onclick="currentBrowsingCategory = '${item.id}'; renderAllParts();">${item.name}</a>`).join('')}
+    `;
 }
     
     // Filter by category
