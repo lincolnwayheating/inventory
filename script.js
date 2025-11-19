@@ -2341,44 +2341,66 @@ function renderCategoryTree() {
     
     container.innerHTML = '';
     
-    // Get root categories
-    const rootCategories = Object.keys(categories).filter(id => !categories[id].parent);
-    
-    rootCategories.sort((a, b) => {
-        return categories[a].name.localeCompare(categories[b].name);
-    }).forEach(rootId => {
-        const rootDiv = document.createElement('div');
-        rootDiv.className = 'category-tree-item';
-        rootDiv.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <strong>${categories[rootId].name}</strong>
-                <button class="btn btn-danger" style="padding: 5px 10px;" onclick="deleteCategory('${rootId}')">Delete</button>
+    // Recursive function to render category and its children
+    function renderCategory(catId, level = 0) {
+        const cat = categories[catId];
+        const indent = level * 30; // 30px per level
+        
+        const div = document.createElement('div');
+        div.className = 'category-tree-item';
+        div.style.marginLeft = indent + 'px';
+        div.style.borderLeft = level > 0 ? '3px solid #e0e0e0' : 'none';
+        div.style.paddingLeft = level > 0 ? '15px' : '0';
+        
+        // Get part count
+        const partCount = getPartsInCategory(catId).length;
+        
+        // Get direct children count
+        const childCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
+        
+        // Icon based on level and children
+        let icon = '📦';
+        if (childCount > 0) {
+            icon = level === 0 ? '📂' : '📁';
+        }
+        
+        const levelLabel = level === 0 ? '' : level === 1 ? '↳ ' : '  ↳ ';
+        const bold = level === 0 ? 'font-weight: bold;' : '';
+        
+        div.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; background: ${level % 2 === 0 ? '#fff' : '#f8f9fa'}; border-radius: 6px; margin-bottom: 5px;">
+                <div style="${bold}">
+                    ${icon} ${levelLabel}${cat.name}
+                    <span style="color: #666; font-size: 0.85em; font-weight: normal; margin-left: 10px;">(${partCount} parts${childCount > 0 ? `, ${childCount} sub` : ''})</span>
+                </div>
+                <button class="btn btn-danger" style="padding: 5px 10px;" onclick="deleteCategory('${catId}')">Delete</button>
             </div>
         `;
         
-// Add children
-const children = Object.keys(categories).filter(id => {
-    return categories[id].parent === rootId;
-});
+        container.appendChild(div);
         
-        children.sort((a, b) => {
-            return categories[a].name.localeCompare(categories[b].name);
-        }).forEach(childId => {
-            const childDiv = document.createElement('div');
-            childDiv.className = 'category-tree-child';
-            childDiv.innerHTML = `
-                <div class="category-tree-item">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span>↳ ${categories[childId].name}</span>
-                        <button class="btn btn-danger" style="padding: 5px 10px;" onclick="deleteCategory('${childId}')">Delete</button>
-                    </div>
-                </div>
-            `;
-            rootDiv.appendChild(childDiv);
+        // Render children recursively
+        const children = Object.keys(categories)
+            .filter(id => categories[id].parent === catId)
+            .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
+        
+        children.forEach(childId => {
+            renderCategory(childId, level + 1);
         });
-        
-        container.appendChild(rootDiv);
+    }
+    
+    // Get root categories and render them
+    const rootCategories = Object.keys(categories)
+        .filter(id => !categories[id].parent)
+        .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
+    
+    rootCategories.forEach(rootId => {
+        renderCategory(rootId, 0);
     });
+    
+    if (rootCategories.length === 0) {
+        container.innerHTML = '<p style="color: #666; text-align: center; padding: 40px;">No categories yet</p>';
+    }
 }
 
 async function addCategory() {
