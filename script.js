@@ -1058,9 +1058,19 @@ function createPartCard(partId) {
     card.className = 'part-card';
     
     let imageHTML = '';
-    if (part.imageUrl) {
-        imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                     <div class="part-card-placeholder" style="display: none;">📦</div>`;
+    if (part.imageUrl && part.imageUrl.trim() !== '') {
+        // For Google Drive links, ensure proper format
+        let imageUrl = part.imageUrl;
+        if (imageUrl.includes('drive.google.com')) {
+            // Extract file ID and use proper Google Drive image URL
+            const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+            if (fileIdMatch) {
+                const fileId = fileIdMatch[1] || fileIdMatch[2];
+                imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`;
+            }
+        }
+        
+        imageHTML = `<img src="${imageUrl}" class="part-card-image" alt="${part.name}" loading="lazy">`;
     } else {
         imageHTML = '<div class="part-card-placeholder">📦</div>';
     }
@@ -1084,7 +1094,6 @@ function createPartCard(partId) {
     card.onclick = () => openPartDetail(partId);
     return card;
 }
-
 // ============================================
 // PART SELECTION MODAL
 // ============================================
