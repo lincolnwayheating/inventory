@@ -35,7 +35,7 @@
         <h1>HVAC Inventory</h1>
         <p>Enter your PIN to continue</p>
         <div class="error-msg" id="errorMsg">❌ Invalid PIN</div>
-        <input type="password" class="pin-input" id="pinInput" maxlength="4" placeholder="••••" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
+        <input type="tel" class="pin-input" id="pinInput" maxlength="4" placeholder="••••" inputmode="numeric" pattern="[0-9]*" autocomplete="off" autofocus>
         <button class="btn btn-primary" id="loginBtn" style="width: 100%;">Login</button>
     </div>
 </div>
@@ -50,28 +50,41 @@
                     <h1>🔧 HVAC Inventory</h1>
                     <p>Track parts from shop → truck → job</p>
                 </div>
-                <button class="btn btn-refresh" id="refreshBtn">🔄 Refresh</button>
+                <button class="btn btn-refresh" id="refreshBtn">🔄</button>
             </div>
             <div class="user-info">
                 <span class="user-badge" id="userBadge">Loading...</span>
-                <button class="logout-btn" id="logoutBtn">🔒 Logout</button>
+                <button class="logout-btn" id="logoutBtn">Logout</button>
             </div>
         </div>
         
         <!-- Tabs -->
         <div class="tabs" id="tabContainer"></div>
         
-        <!-- Dashboard - LOW STOCK ONLY -->
+        <!-- Dashboard - LOW STOCK -->
         <div id="dashboard" class="content active">
             <h2>⚠️ Low Stock Alert</h2>
-            <p style="color: #666; margin-bottom: 20px;">Items below minimum stock levels</p>
             <div id="lowStockContainer"></div>
         </div>
         
-        <!-- All Parts - Browse & Manage -->
+        <!-- All Parts -->
         <div id="all-parts" class="content">
-            <h2>📦 All Parts</h2>
-            <input type="text" id="searchAllParts" placeholder="🔍 Search parts..." style="width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 1em; margin-bottom: 20px;">
+            <div style="margin-bottom: 15px;">
+                <input type="text" id="searchAllParts" placeholder="🔍 Search parts..." class="search-input">
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: 600; margin-right: 10px;">Filter:</label>
+                <button class="btn btn-secondary filter-btn active" data-filter="all">All Parts</button>
+                <button class="btn btn-secondary filter-btn" data-filter="category">By Category</button>
+            </div>
+            
+            <div id="categoryFilterContainer" style="display: none; margin-bottom: 15px;">
+                <select id="categoryFilter" class="category-select">
+                    <option value="">All Categories</option>
+                </select>
+            </div>
+            
             <div id="allPartsGrid" class="parts-grid"></div>
         </div>
         
@@ -79,75 +92,117 @@
         <div id="quick-actions" class="content">
             <h2>⚡ Quick Actions</h2>
             
-            <!-- Load Truck -->
-            <div class="action-card">
-                <h3>📦 Load Truck from Shop</h3>
-                <div class="form-group">
-                    <label>Select Part</label>
-                    <button type="button" class="btn btn-secondary part-select-btn" data-context="load" style="width: 100%;">Choose Part</button>
-                    <div class="selected-part-display" id="loadPartDisplay"></div>
-                </div>
+            <!-- Scan Mode Toggle -->
+            <div class="scan-mode-toggle" id="scanModeToggle" style="display: none;">
+                <h3>📷 Barcode Scan Mode</h3>
+                <p>Select action, then scan items</p>
                 <div class="form-row">
-                    <div class="form-group">
-                        <label>Quantity</label>
-                        <input type="number" id="loadQty" value="1" min="1" inputmode="numeric">
-                    </div>
-                    <div class="form-group">
-                        <label>To Truck</label>
-                        <select id="loadTruck"></select>
-                    </div>
+                    <select id="scanAction" class="form-select">
+                        <option value="">-- Select Action --</option>
+                        <option value="use">Use on Job</option>
+                        <option value="load">Load Truck</option>
+                        <option value="return">Return to Shop</option>
+                        <option value="receive">Receive to Shop</option>
+                    </select>
+                    <select id="scanTruck" class="form-select"></select>
+                    <input type="text" id="scanJobName" placeholder="Job name (optional)" class="form-input">
                 </div>
-                <button class="btn btn-primary" id="loadTruckBtn">Load Truck</button>
+                <button class="btn btn-danger" id="exitScanMode">Exit Scan Mode</button>
             </div>
             
-            <!-- Use on Job -->
-            <div class="action-card">
-                <h3>🔧 Use Parts on Job</h3>
-                <div class="form-group">
-                    <label>From Truck</label>
-                    <select id="useTruck"></select>
+            <!-- Manual Actions -->
+            <div id="manualActions">
+                <div class="action-card">
+                    <h3>🔧 Use Parts on Job</h3>
+                    <div class="form-group">
+                        <label>From Truck</label>
+                        <select id="useTruck"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Select Part</label>
+                        <button type="button" class="btn btn-secondary part-select-btn" data-context="use">Choose Part</button>
+                        <div class="selected-part-display" id="usePartDisplay"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Quantity</label>
+                            <input type="number" id="useQty" value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Job Name</label>
+                            <input type="text" id="jobName" placeholder="Optional">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="usePartsBtn">Use Parts</button>
                 </div>
-                <div class="form-group">
-                    <label>Select Part</label>
-                    <button type="button" class="btn btn-secondary part-select-btn" data-context="use" style="width: 100%;">Choose Part</button>
-                    <div class="selected-part-display" id="usePartDisplay"></div>
+                
+                <div class="action-card">
+                    <h3>📦 Load Truck from Shop</h3>
+                    <div class="form-group">
+                        <label>Select Part</label>
+                        <button type="button" class="btn btn-secondary part-select-btn" data-context="load">Choose Part</button>
+                        <div class="selected-part-display" id="loadPartDisplay"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Quantity</label>
+                            <input type="number" id="loadQty" value="1" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>To Truck</label>
+                            <select id="loadTruck"></select>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="loadTruckBtn">Load Truck</button>
                 </div>
-                <div class="form-row">
+                
+                <div class="action-card">
+                    <h3>↩️ Return to Shop</h3>
+                    <div class="form-group">
+                        <label>From Truck</label>
+                        <select id="returnTruck"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Select Part</label>
+                        <button type="button" class="btn btn-secondary part-select-btn" data-context="return">Choose Part</button>
+                        <div class="selected-part-display" id="returnPartDisplay"></div>
+                    </div>
                     <div class="form-group">
                         <label>Quantity</label>
-                        <input type="number" id="useQty" value="1" min="1" inputmode="numeric">
+                        <input type="number" id="returnQty" value="1" min="1">
+                    </div>
+                    <button class="btn btn-primary" id="returnBtn">Return to Shop</button>
+                </div>
+                
+                <div class="action-card">
+                    <h3>🔄 Transfer Between Trucks</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>From Truck</label>
+                            <select id="transferFromTruck"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>To Truck</label>
+                            <select id="transferToTruck"></select>
+                        </div>
                     </div>
                     <div class="form-group">
-                        <label>Customer/Job</label>
-                        <input type="text" id="jobName" placeholder="Optional">
+                        <label>Select Part</label>
+                        <button type="button" class="btn btn-secondary part-select-btn" data-context="transfer">Choose Part</button>
+                        <div class="selected-part-display" id="transferPartDisplay"></div>
                     </div>
+                    <div class="form-group">
+                        <label>Quantity</label>
+                        <input type="number" id="transferQty" value="1" min="1">
+                    </div>
+                    <button class="btn btn-primary" id="transferBtn">Transfer</button>
                 </div>
-                <button class="btn btn-primary" id="usePartsBtn">Record Usage</button>
-            </div>
-            
-            <!-- Return to Shop -->
-            <div class="action-card">
-                <h3>↩️ Return to Shop</h3>
-                <div class="form-group">
-                    <label>From Truck</label>
-                    <select id="returnTruck"></select>
-                </div>
-                <div class="form-group">
-                    <label>Select Part</label>
-                    <button type="button" class="btn btn-secondary part-select-btn" data-context="return" style="width: 100%;">Choose Part</button>
-                    <div class="selected-part-display" id="returnPartDisplay"></div>
-                </div>
-                <div class="form-group">
-                    <label>Quantity</label>
-                    <input type="number" id="returnQty" value="1" min="1" inputmode="numeric">
-                </div>
-                <button class="btn btn-primary" id="returnBtn">Return to Shop</button>
             </div>
         </div>
         
         <!-- Quick Load -->
         <div id="quick-load" class="content">
-            <h2>🚛 Quick Restock</h2>
+            <h2>🚛 Quick Load</h2>
             
             <div class="form-row" style="margin-bottom: 20px;">
                 <div class="form-group">
@@ -157,33 +212,24 @@
                         <option value="shop">🏪 Shop</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>Season Filter</label>
-                    <div class="season-filter">
-                        <label><input type="checkbox" class="season-checkbox" value="year-round" checked> Year-Round</label>
-                        <label><input type="checkbox" class="season-checkbox" value="heating"> Heating</label>
-                        <label><input type="checkbox" class="season-checkbox" value="cooling"> Cooling</label>
-                    </div>
-                </div>
             </div>
             
             <div id="quickLoadList"></div>
-            <button class="btn btn-primary" id="quickLoadBtn" style="display: none; margin-top: 20px;">Restock Selected Items</button>
+            <button class="btn btn-primary" id="quickLoadBtn" style="display: none; margin-top: 20px;">Load Selected Items</button>
         </div>
         
         <!-- Receive Stock -->
         <div id="receive-stock" class="content">
-            <h2>📥 Receive Stock to Shop</h2>
-            <p style="color: #666; margin-bottom: 20px;">Add new inventory from suppliers</p>
+            <h2>📥 Receive Stock</h2>
             
             <div class="form-group">
                 <label>Select Part</label>
-                <button type="button" class="btn btn-secondary part-select-btn" data-context="receive" style="width: 100%;">Choose Part</button>
+                <button type="button" class="btn btn-secondary part-select-btn" data-context="receive">Choose Part</button>
                 <div class="selected-part-display" id="receivePartDisplay"></div>
             </div>
             <div class="form-group">
-                <label>Quantity Received</label>
-                <input type="number" id="receiveQty" value="1" min="1" inputmode="numeric">
+                <label>Quantity</label>
+                <input type="number" id="receiveQty" value="1" min="1">
             </div>
             <button class="btn btn-primary" id="receiveStockBtn">Receive Stock</button>
         </div>
@@ -207,16 +253,17 @@
                 <div class="form-group">
                     <label>Barcode</label>
                     <input type="text" id="partBarcode" placeholder="Scan or enter">
+                    <button type="button" class="btn btn-secondary barcode-scan-btn" data-target="partBarcode" style="margin-top: 5px;">📷 Scan Barcode</button>
                 </div>
                 <div class="form-group">
-                    <label>Part Image</label>
+                    <label>Image</label>
                     <input type="file" id="partImageFile" accept="image/*" capture="environment" style="display: none;">
-                    <button type="button" class="btn btn-secondary" id="uploadImageBtn" style="width: 100%;">📷 Take/Upload Photo</button>
+                    <button type="button" class="btn btn-secondary" id="uploadImageBtn">📷 Photo</button>
                     <div id="imagePreview" style="display: none; margin-top: 10px;">
                         <img id="imagePreviewImg" style="max-width: 100%; max-height: 150px; border-radius: 8px;">
                         <button type="button" onclick="clearImageUpload()" class="btn btn-danger" style="margin-top: 5px; padding: 5px 10px;">Remove</button>
                     </div>
-                    <input type="url" id="partImageUrl" placeholder="Or paste URL" style="margin-top: 5px; font-size: 0.9em;">
+                    <input type="url" id="partImageUrl" placeholder="Or paste URL" style="margin-top: 5px;">
                 </div>
                 <div class="form-group">
                     <label>Season</label>
@@ -227,16 +274,16 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Shop Qty *</label>
-                    <input type="number" id="shopQty" value="0" min="0" inputmode="numeric">
+                    <label>Shop Qty</label>
+                    <input type="number" id="shopQty" value="0" min="0">
                 </div>
                 <div class="form-group">
-                    <label>Min Shop Stock *</label>
-                    <input type="number" id="minStock" value="2" min="0" inputmode="numeric">
+                    <label>Min Shop Stock</label>
+                    <input type="number" id="minStock" value="2" min="0">
                 </div>
                 <div class="form-group">
                     <label>Price</label>
-                    <input type="number" id="partPrice" step="0.01" placeholder="0.00" inputmode="decimal">
+                    <input type="number" id="partPrice" step="0.01" placeholder="0.00">
                 </div>
                 <div class="form-group">
                     <label>Purchase Link</label>
@@ -244,42 +291,67 @@
                 </div>
             </div>
             
-            <h3 style="margin-top: 30px;">Minimum Truck Stock</h3>
-            <p style="color: #666; margin-bottom: 15px;">Set minimum quantity for each truck</p>
+            <h3 style="margin-top: 20px;">Truck Minimums</h3>
             <div id="truckMinimumsContainer" class="form-grid"></div>
             
             <button class="btn btn-primary" id="addPartBtn" style="margin-top: 20px;">Add Part</button>
         </div>
         
+        <!-- Categories -->
+        <div id="categories" class="content">
+            <h2>📁 Categories</h2>
+            
+            <div class="form-row" style="margin-bottom: 20px;">
+                <input type="text" id="newCategoryName" placeholder="Category name" style="flex: 1;">
+                <select id="newCategoryParent" style="flex: 1;">
+                    <option value="">Top Level</option>
+                </select>
+                <button class="btn btn-primary" id="addCategoryBtn">Add</button>
+            </div>
+            
+            <div id="categoryTree"></div>
+        </div>
+        
         <!-- History -->
         <div id="history" class="content">
-            <h2>📋 Recent Activity</h2>
+            <h2>📋 History</h2>
             <div id="historyList"></div>
         </div>
         
-        <!-- Settings (Admin Only) -->
+        <!-- Settings -->
         <div id="settings" class="content">
-            <div class="admin-section">
-                <h2>⚙️ Settings</h2>
-                
-                <h3>Categories</h3>
-                <div class="form-row">
-                    <input type="text" id="newCategoryName" placeholder="Category name" style="flex: 1;">
-                    <button class="btn btn-primary" id="addCategoryBtn">Add Category</button>
+            <h2>⚙️ Settings</h2>
+            
+            <div class="settings-section">
+                <h3>Active Seasons</h3>
+                <p style="color: #666; margin-bottom: 10px;">Select which seasons to track for low stock alerts</p>
+                <div class="season-checkboxes">
+                    <label><input type="checkbox" class="active-season-cb" value="year-round"> Year-Round</label>
+                    <label><input type="checkbox" class="active-season-cb" value="heating"> Heating</label>
+                    <label><input type="checkbox" class="active-season-cb" value="cooling"> Cooling</label>
                 </div>
-                <div id="categoryList" style="margin-top: 15px;"></div>
-                
-                <h3 style="margin-top: 30px;">Trucks</h3>
+                <button class="btn btn-primary" id="saveSeasonsBtn" style="margin-top: 10px;">Save Seasons</button>
+            </div>
+            
+            <div class="settings-section">
+                <h3>My Account</h3>
+                <button class="btn btn-secondary" id="changePinBtn">Change PIN</button>
+            </div>
+            
+            <div class="settings-section">
+                <h3>Trucks</h3>
                 <div class="form-row">
                     <input type="text" id="newTruckName" placeholder="Truck name" style="flex: 1;">
                     <button class="btn btn-primary" id="addTruckBtn">Add Truck</button>
                 </div>
                 <div id="truckList" style="margin-top: 15px;"></div>
-                
-                <h3 style="margin-top: 30px;">Users</h3>
+            </div>
+            
+            <div class="settings-section">
+                <h3>Users</h3>
                 <div class="form-grid">
                     <input type="text" id="newUserName" placeholder="Name">
-                    <input type="text" id="newUserPin" placeholder="PIN (4 digits)" maxlength="4" inputmode="numeric">
+                    <input type="tel" id="newUserPin" placeholder="PIN" maxlength="4">
                     <select id="newUserTruck"></select>
                     <button class="btn btn-primary" id="addUserBtn">Add User</button>
                 </div>
@@ -289,14 +361,14 @@
     </div>
 </div>
 
-<!-- Part Selection Modal -->
+<!-- Part Modal -->
 <div class="modal" id="partModal">
     <div class="modal-content">
         <div class="modal-header">
             <h2>Select Part</h2>
             <button class="modal-close" id="closePartModal">✕</button>
         </div>
-        <input type="text" id="partModalSearch" placeholder="🔍 Search parts..." class="modal-search">
+        <input type="text" id="partModalSearch" placeholder="🔍 Search..." class="modal-search">
         <div class="modal-body" id="partModalBody"></div>
     </div>
 </div>
@@ -312,17 +384,25 @@
     </div>
 </div>
 
-<!-- Barcode Scanner -->
-<div id="barcodeScanner" style="display: none;">
-    <video id="barcodeScannerVideo"></video>
-    <div id="barcodeScannerOverlay">
-        <p>Point camera at barcode</p>
-        <button id="closeBarcodeScanner" class="btn btn-danger">Cancel</button>
+<!-- Barcode Scanner Modal -->
+<div class="modal" id="barcodeScannerModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Scan Barcode</h2>
+            <button class="modal-close" id="closeBarcodeScannerModal">✕</button>
+        </div>
+        <div class="scanner-container">
+            <video id="barcodeScannerVideo" autoplay></video>
+            <div class="scanner-overlay">
+                <div class="scanner-box"></div>
+                <p>Point camera at barcode</p>
+            </div>
+        </div>
     </div>
 </div>
 
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
-<script src="script.js?v=8"></script>
+<script src="script.js?v=10"></script>
 
 </body>
 </html>
