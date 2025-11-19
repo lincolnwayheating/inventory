@@ -1154,13 +1154,20 @@ function renderPartModalList(filter = '') {
             const card = document.createElement('div');
             card.className = 'part-card';
             
-            let imageHTML = '';
-            if (part.imageUrl) {
-                imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                             <div class="part-card-placeholder" style="display: none;">📦</div>`;
-            } else {
-                imageHTML = '<div class="part-card-placeholder">📦</div>';
-            }
+           let imageHTML = '';
+if (part.imageUrl && part.imageUrl.trim() !== '') {
+    let imageUrl = part.imageUrl;
+    if (imageUrl.includes('drive.google.com')) {
+        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+        if (fileIdMatch) {
+            const fileId = fileIdMatch[1] || fileIdMatch[2];
+            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`;
+        }
+    }
+    imageHTML = `<img src="${imageUrl}" class="part-card-image" alt="${part.name}" loading="lazy">`;
+} else {
+    imageHTML = '<div class="part-card-placeholder">📦</div>';
+}
             
             card.innerHTML = `
                 ${imageHTML}
@@ -1293,12 +1300,19 @@ const allPartsInCategory = getPartsInExactCategory(currentBrowsingCategory);
                 }
                 
                 let imageHTML = '';
-                if (part.imageUrl) {
-                    imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                                 <div class="part-card-placeholder" style="display: none;">📦</div>`;
-                } else {
-                    imageHTML = '<div class="part-card-placeholder">📦</div>';
-                }
+if (part.imageUrl && part.imageUrl.trim() !== '') {
+    let imageUrl = part.imageUrl;
+    if (imageUrl.includes('drive.google.com')) {
+        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+        if (fileIdMatch) {
+            const fileId = fileIdMatch[1] || fileIdMatch[2];
+            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`;
+        }
+    }
+    imageHTML = `<img src="${imageUrl}" class="part-card-image" alt="${part.name}" loading="lazy">`;
+} else {
+    imageHTML = '<div class="part-card-placeholder">📦</div>';
+}
                 
                 card.innerHTML = `
                     ${imageHTML}
@@ -2079,11 +2093,20 @@ async function updateQuickLoadList() {
             div.className = 'quick-load-item';
             
             let imageHTML = '';
-            if (part.imageUrl) {
-                imageHTML = `<img src="${part.imageUrl}" class="quick-load-image" onerror="this.style.display='none';">`;
-            } else {
-                imageHTML = '<div style="width: 60px; height: 60px; background: #f0f0f0; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 2em;">📦</div>';
-            }
+if (part.imageUrl && part.imageUrl.trim() !== '') {
+    // For Google Drive links, ensure proper format
+    let imageUrl = part.imageUrl;
+    if (imageUrl.includes('drive.google.com')) {
+        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+        if (fileIdMatch) {
+            const fileId = fileIdMatch[1] || fileIdMatch[2];
+            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w200`;
+        }
+    }
+    imageHTML = `<img src="${imageUrl}" class="quick-load-image" loading="lazy">`;
+} else {
+    imageHTML = '<div style="width: 60px; height: 60px; background: #f0f0f0; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 2em;">📦</div>';
+}
             
             div.innerHTML = `
                 <input type="checkbox" class="quick-load-checkbox" data-part-id="${item.id}">
