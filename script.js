@@ -270,7 +270,8 @@ async function refreshData() {
                         category: row[2] || 'other',
                         partNumber: row[3] || '',
                         barcode: row[4] || '',
-                        shop: parseInt(row[5]) || 0
+                        imageUrl: row[5] || '',
+                        shop: parseInt(row[6]) || 0
                     };
                     
                     // Match truck columns by header name
