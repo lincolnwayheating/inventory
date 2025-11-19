@@ -1193,7 +1193,7 @@ function renderPartModalList(filter = '') {
             card.innerHTML = `
                 <div class="category-icon">${icon}</div>
                 <div class="category-name">${cat.name}</div>
-                <div class="category-count">${partCount} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
+                <div class="category-count">${partCount > 0 ? `${partCount} available` : `${totalParts} parts (none available)`}${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
             `;
             card.onclick = () => {
                 currentBrowsingCategory = catId;
