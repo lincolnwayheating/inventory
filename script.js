@@ -1030,15 +1030,15 @@ function renderPartModalList(filter = '') {
         }
     }
     
-    // Apply search filter
-    if (filter) {
-        parts = parts.filter(id => {
-            const part = inventory[id];
-            return part.name.toLowerCase().includes(filter.toLowerCase()) ||
-                   part.id.toLowerCase().includes(filter.toLowerCase()) ||
-                   part.barcode.toLowerCase().includes(filter.toLowerCase());
-        });
-    }
+   // Apply search filter
+if (filter) {
+    parts = parts.filter(id => {
+        const part = inventory[id];
+        return part.name.toLowerCase().includes(filter.toLowerCase()) ||
+               String(part.id).toLowerCase().includes(filter.toLowerCase()) ||
+               (part.barcode && String(part.barcode).toLowerCase().includes(filter.toLowerCase()));
+    });
+}
     
     const grid = document.createElement('div');
     grid.className = 'parts-grid';
