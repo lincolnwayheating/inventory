@@ -892,8 +892,8 @@ if (searchTerm && searchTerm.trim() !== '') {
     parts = parts.filter(id => {
         const part = inventory[id];
         return part.name.toLowerCase().includes(search) ||
-               String(part.id).toLowerCase().includes(search) ||  // ✅ FIXED
-               (part.barcode && part.barcode.toLowerCase().includes(search));
+               String(part.id).toLowerCase().includes(search) ||
+               (part.barcode && String(part.barcode).toLowerCase().includes(search));  // ✅ FIXED
     });
 }
     
