@@ -1086,6 +1086,7 @@ let currentPartModalContext = null;
 
 function openPartModal(context) {
     currentPartModalContext = context;
+    currentBrowsingCategory = null; // Reset to root
     const modal = document.getElementById('partModal');
     modal.classList.add('show');
     
@@ -1118,14 +1119,172 @@ function renderPartModalList(filter = '') {
         }
     }
     
-   // Apply search filter
-if (filter) {
-    parts = parts.filter(id => {
-        const part = inventory[id];
-        return part.name.toLowerCase().includes(filter.toLowerCase()) ||
-               String(part.id).toLowerCase().includes(filter.toLowerCase()) ||
-               (part.barcode && String(part.barcode).toLowerCase().includes(filter.toLowerCase()));
-    });
+    // If searching, show filtered parts
+    if (filter && filter.trim() !== '') {
+        const search = filter.toLowerCase().trim();
+        parts = parts.filter(id => {
+            const part = inventory[id];
+            return part.name.toLowerCase().includes(search) ||
+                   String(part.id).toLowerCase().includes(search) ||
+                   (part.barcode && String(part.barcode).toLowerCase().includes(search));
+        });
+        
+        // Show parts grid
+        const grid = document.createElement('div');
+        grid.className = 'parts-grid';
+        
+        parts.sort((a, b) => inventory[a].name.localeCompare(inventory[b].name)).forEach(id => {
+            const part = inventory[id];
+            const card = document.createElement('div');
+            card.className = 'part-card';
+            
+            let imageHTML = '';
+            if (part.imageUrl) {
+                imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                             <div class="part-card-placeholder" style="display: none;">📦</div>`;
+            } else {
+                imageHTML = '<div class="part-card-placeholder">📦</div>';
+            }
+            
+            card.innerHTML = `
+                ${imageHTML}
+                <div class="part-card-name">${part.name}</div>
+                <div class="part-card-number">Part #: ${part.id}</div>
+            `;
+            
+            card.onclick = () => selectPart(id);
+            grid.appendChild(card);
+        });
+        
+        body.appendChild(grid);
+        
+        if (parts.length === 0) {
+            body.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No parts found</p>';
+        }
+        return;
+    }
+    
+    // Not searching - show category navigation
+    if (!currentBrowsingCategory) {
+        // Show root categories
+        const breadcrumb = document.createElement('div');
+        breadcrumb.style.cssText = 'padding: 15px; background: #f8f9fa; border-bottom: 2px solid #e0e0e0; margin-bottom: 15px; font-weight: 500;';
+        breadcrumb.innerHTML = '📁 All Categories';
+        body.appendChild(breadcrumb);
+        
+        const categoryGrid = document.createElement('div');
+        categoryGrid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; padding: 15px;';
+        
+        const rootCategories = Object.keys(categories)
+            .filter(id => !categories[id].parent)
+            .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
+        
+        rootCategories.forEach(catId => {
+            const cat = categories[catId];
+            const partCount = getPartsInCategory(catId).filter(partId => parts.includes(partId)).length;
+            const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
+            const icon = subcatCount > 0 ? '📁' : '📦';
+            
+            const card = document.createElement('div');
+            card.className = 'category-nav-card';
+            card.innerHTML = `
+                <div class="category-icon">${icon}</div>
+                <div class="category-name">${cat.name}</div>
+                <div class="category-count">${partCount} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
+            `;
+            card.onclick = () => {
+                currentBrowsingCategory = catId;
+                renderPartModalList();
+            };
+            categoryGrid.appendChild(card);
+        });
+        
+        body.appendChild(categoryGrid);
+    } else {
+        // Show breadcrumb
+        const breadcrumb = document.createElement('div');
+        breadcrumb.style.cssText = 'padding: 15px; background: #f8f9fa; border-bottom: 2px solid #e0e0e0; margin-bottom: 15px;';
+        
+        const trail = [];
+        let currentId = currentBrowsingCategory;
+        while (currentId) {
+            trail.unshift({ id: currentId, name: categories[currentId].name });
+            currentId = categories[currentId].parent;
+        }
+        
+        breadcrumb.innerHTML = `
+            <a class="breadcrumb-link" onclick="currentBrowsingCategory = null; renderPartModalList();" style="cursor: pointer; color: #007bff;">📁 All Categories</a>
+            ${trail.map(item => ` > <a class="breadcrumb-link" onclick="currentBrowsingCategory = '${item.id}'; renderPartModalList();" style="cursor: pointer; color: #007bff;">${item.name}</a>`).join('')}
+        `;
+        body.appendChild(breadcrumb);
+        
+        // Show subcategories
+        const subcategories = Object.keys(categories)
+            .filter(id => categories[id].parent === currentBrowsingCategory)
+            .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
+        
+        if (subcategories.length > 0) {
+            const categoryGrid = document.createElement('div');
+            categoryGrid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; padding: 15px; border-bottom: 2px solid #e0e0e0; margin-bottom: 15px;';
+            
+            subcategories.forEach(catId => {
+                const cat = categories[catId];
+                const partCount = getPartsInCategory(catId).filter(partId => parts.includes(partId)).length;
+                const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
+                const icon = subcatCount > 0 ? '📁' : '📦';
+                
+                const card = document.createElement('div');
+                card.className = 'category-nav-card';
+                card.innerHTML = `
+                    <div class="category-icon">${icon}</div>
+                    <div class="category-name">${cat.name}</div>
+                    <div class="category-count">${partCount} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
+                `;
+                card.onclick = () => {
+                    currentBrowsingCategory = catId;
+                    renderPartModalList();
+                };
+                categoryGrid.appendChild(card);
+            });
+            
+            body.appendChild(categoryGrid);
+        }
+        
+        // Show parts in this category
+        const categoryParts = getPartsInCategory(currentBrowsingCategory).filter(partId => parts.includes(partId));
+        
+        if (categoryParts.length > 0) {
+            const grid = document.createElement('div');
+            grid.className = 'parts-grid';
+            
+            categoryParts.sort((a, b) => inventory[a].name.localeCompare(inventory[b].name)).forEach(id => {
+                const part = inventory[id];
+                const card = document.createElement('div');
+                card.className = 'part-card';
+                
+                let imageHTML = '';
+                if (part.imageUrl) {
+                    imageHTML = `<img src="${part.imageUrl}" class="part-card-image" alt="${part.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                 <div class="part-card-placeholder" style="display: none;">📦</div>`;
+                } else {
+                    imageHTML = '<div class="part-card-placeholder">📦</div>';
+                }
+                
+                card.innerHTML = `
+                    ${imageHTML}
+                    <div class="part-card-name">${part.name}</div>
+                    <div class="part-card-number">Part #: ${part.id}</div>
+                `;
+                
+                card.onclick = () => selectPart(id);
+                grid.appendChild(card);
+            });
+            
+            body.appendChild(grid);
+        } else if (subcategories.length === 0) {
+            body.innerHTML += '<p style="text-align: center; color: #666; padding: 40px;">No parts in this category</p>';
+        }
+    }
 }
     
     const grid = document.createElement('div');
