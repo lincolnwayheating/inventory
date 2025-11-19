@@ -878,8 +878,7 @@ function updateDashboard() {
 // ALL PARTS VIEW WITH CATEGORIES
 // ============================================
 
-// Current category browsing state
-let currentBrowsingCategory = null;
+
 
 function renderAllParts(searchTerm = '') {
     const grid = document.getElementById('allPartsGrid');
