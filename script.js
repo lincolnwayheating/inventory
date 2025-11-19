@@ -45,6 +45,7 @@ let uploadedImageUrl = '';
 // Current filter state
 let currentCategoryFilter = '';
 let currentViewMode = 'all';
+let currentBrowsingCategory = null;
 
 // ============================================
 // INITIALIZATION
@@ -922,7 +923,6 @@ function renderAllParts(searchTerm = '') {
                 .filter(id => {
                     const parent = categories[id].parent;
                     if (!parent) return false;
-                    // Find parent ID by name
                     const parentId = Object.keys(categories).find(pid => categories[pid].name === parent);
                     return parentId === currentBrowsingCategory;
                 })
@@ -965,7 +965,6 @@ function renderAllParts(searchTerm = '') {
         });
     }
     
-    // Show all alphabetically
     parts.sort((a, b) => {
         return inventory[a].name.localeCompare(inventory[b].name);
     });
@@ -979,6 +978,89 @@ function renderAllParts(searchTerm = '') {
     }
 }
 
+function createCategoryCard(catId) {
+    const cat = categories[catId];
+    const card = document.createElement('div');
+    card.className = 'category-nav-card';
+    
+    const partCount = getPartsInCategory(catId).length;
+    
+    const subcatCount = Object.keys(categories).filter(id => {
+        const parent = categories[id].parent;
+        if (!parent) return false;
+        const parentId = Object.keys(categories).find(pid => categories[pid].name === parent);
+        return parentId === catId;
+    }).length;
+    
+    const icon = subcatCount > 0 ? '📁' : '📦';
+    
+    card.innerHTML = `
+        <div class="category-icon">${icon}</div>
+        <div class="category-name">${cat.name}</div>
+        <div class="category-count">${partCount} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
+    `;
+    
+    card.onclick = () => {
+        currentBrowsingCategory = catId;
+        renderAllParts();
+    };
+    
+    return card;
+}
+
+function getPartsInCategory(categoryId) {
+    const categoryIds = [categoryId];
+    
+    const addSubcategories = (parentId) => {
+        Object.keys(categories).forEach(id => {
+            const parent = categories[id].parent;
+            if (parent) {
+                const parentCatId = Object.keys(categories).find(pid => categories[pid].name === parent);
+                if (parentCatId === parentId && !categoryIds.includes(id)) {
+                    categoryIds.push(id);
+                    addSubcategories(id);
+                }
+            }
+        });
+    };
+    
+    addSubcategories(categoryId);
+    
+    return Object.keys(inventory).filter(partId => {
+        return categoryIds.includes(inventory[partId].category);
+    });
+}
+
+function updateBreadcrumb() {
+    const breadcrumb = document.getElementById('categoryBreadcrumb');
+    if (!breadcrumb) return;
+    
+    if (!currentBrowsingCategory) {
+        breadcrumb.innerHTML = '<span>📁 All Categories</span>';
+        return;
+    }
+    
+    const trail = [];
+    let currentId = currentBrowsingCategory;
+    
+    while (currentId) {
+        trail.unshift({ id: currentId, name: categories[currentId].name });
+        
+        const parent = categories[currentId].parent;
+        if (parent) {
+            currentId = Object.keys(categories).find(id => categories[id].name === parent);
+        } else {
+            currentId = null;
+        }
+    }
+    
+    breadcrumb.innerHTML = `
+        <a class="breadcrumb-link" onclick="currentBrowsingCategory = null; renderAllParts();">📁 All Categories</a>
+        ${trail.map(item => ` > <a class="breadcrumb-link" onclick="currentBrowsingCategory = '${item.id}'; renderAllParts();">${item.name}</a>`).join('')}
+    `;
+}
+
+// Keep the createPartCard function that's already below this - DON'T DELETE IT
 function createCategoryCard(catId) {
     const cat = categories[catId];
     const card = document.createElement('div');
