@@ -917,15 +917,12 @@ function renderAllParts(searchTerm = '') {
             // Show subcategories + parts for selected category
             navGrid.innerHTML = '';
             
-            // Get subcategories
-            const subcategories = Object.keys(categories)
-                .filter(id => {
-                    const parent = categories[id].parent;
-                    if (!parent) return false;
-                    const parentId = Object.keys(categories).find(pid => categories[pid].name === parent);
-                    return parentId === currentBrowsingCategory;
-                })
-                .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
+           // Get subcategories
+const subcategories = Object.keys(categories)
+    .filter(id => {
+        return categories[id].parent === currentBrowsingCategory;
+    })
+    .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
             
             subcategories.forEach(catId => {
                 const card = createCategoryCard(catId);
@@ -984,12 +981,9 @@ function createCategoryCard(catId) {
     
     const partCount = getPartsInCategory(catId).length;
     
-    const subcatCount = Object.keys(categories).filter(id => {
-        const parent = categories[id].parent;
-        if (!parent) return false;
-        const parentId = Object.keys(categories).find(pid => categories[pid].name === parent);
-        return parentId === catId;
-    }).length;
+   const subcatCount = Object.keys(categories).filter(id => {
+    return categories[id].parent === catId;
+}).length;
     
     const icon = subcatCount > 0 ? '📁' : '📦';
     
@@ -1010,18 +1004,14 @@ function createCategoryCard(catId) {
 function getPartsInCategory(categoryId) {
     const categoryIds = [categoryId];
     
-    const addSubcategories = (parentId) => {
-        Object.keys(categories).forEach(id => {
-            const parent = categories[id].parent;
-            if (parent) {
-                const parentCatId = Object.keys(categories).find(pid => categories[pid].name === parent);
-                if (parentCatId === parentId && !categoryIds.includes(id)) {
-                    categoryIds.push(id);
-                    addSubcategories(id);
-                }
-            }
-        });
-    };
+   const addSubcategories = (parentId) => {
+    Object.keys(categories).forEach(id => {
+        if (categories[id].parent === parentId && !categoryIds.includes(id)) {
+            categoryIds.push(id);
+            addSubcategories(id);
+        }
+    });
+};
     
     addSubcategories(categoryId);
     
@@ -1042,16 +1032,10 @@ function updateBreadcrumb() {
     const trail = [];
     let currentId = currentBrowsingCategory;
     
-    while (currentId) {
-        trail.unshift({ id: currentId, name: categories[currentId].name });
-        
-        const parent = categories[currentId].parent;
-        if (parent) {
-            currentId = Object.keys(categories).find(id => categories[id].name === parent);
-        } else {
-            currentId = null;
-        }
-    }
+while (currentId) {
+    trail.unshift({ id: currentId, name: categories[currentId].name });
+    currentId = categories[currentId].parent;
+}
     
     breadcrumb.innerHTML = `
         <a class="breadcrumb-link" onclick="currentBrowsingCategory = null; renderAllParts();">📁 All Categories</a>
@@ -2228,13 +2212,10 @@ function renderCategoryTree() {
             </div>
         `;
         
-        // Add children
-        const children = Object.keys(categories).filter(id => {
-            return categories[id].parent && 
-                   Object.keys(categories).find(parentId => 
-                       categories[parentId].name === categories[id].parent
-                   ) === rootId;
-        });
+// Add children
+const children = Object.keys(categories).filter(id => {
+    return categories[id].parent === rootId;
+});
         
         children.sort((a, b) => {
             return categories[a].name.localeCompare(categories[b].name);
