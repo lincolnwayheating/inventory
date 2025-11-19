@@ -990,7 +990,7 @@ function createCategoryCard(catId) {
     card.innerHTML = `
         <div class="category-icon">${icon}</div>
         <div class="category-name">${cat.name}</div>
-        <div class="category-count">${partCount} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
+        <div class="category-count">${totalParts} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
     `;
     
     card.onclick = () => {
@@ -1231,18 +1231,18 @@ function renderPartModalList(filter = '') {
             categoryGrid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; padding: 15px; border-bottom: 2px solid #e0e0e0; margin-bottom: 15px;';
             
             subcategories.forEach(catId => {
-                const cat = categories[catId];
-                const partCount = getPartsInCategory(catId).filter(partId => parts.includes(partId)).length;
-                const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
-                const icon = subcatCount > 0 ? '📁' : '📦';
-                
-                const card = document.createElement('div');
-                card.className = 'category-nav-card';
-                card.innerHTML = `
-                    <div class="category-icon">${icon}</div>
-                    <div class="category-name">${cat.name}</div>
-                    <div class="category-count">${partCount} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
-                `;
+    const cat = categories[catId];
+    const totalParts = getPartsInCategory(catId).length;
+    const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
+    const icon = subcatCount > 0 ? '📁' : '📦';
+    
+    const card = document.createElement('div');
+    card.className = 'category-nav-card';
+    card.innerHTML = `
+        <div class="category-icon">${icon}</div>
+        <div class="category-name">${cat.name}</div>
+        <div class="category-count">${totalParts} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
+    `;
                 card.onclick = () => {
                     currentBrowsingCategory = catId;
                     renderPartModalList();
