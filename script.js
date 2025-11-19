@@ -886,16 +886,16 @@ function renderAllParts(searchTerm = '') {
     
     let parts = Object.keys(inventory);
     
-    // Filter by search
-    if (searchTerm && searchTerm.trim() !== '') {
-        const search = searchTerm.toLowerCase().trim();
-        parts = parts.filter(id => {
-            const part = inventory[id];
-            return part.name.toLowerCase().includes(search) ||
-                   part.id.toLowerCase().includes(search) ||
-                   (part.barcode && part.barcode.toLowerCase().includes(search));
-        });
-    }
+// Filter by search
+if (searchTerm && searchTerm.trim() !== '') {
+    const search = searchTerm.toLowerCase().trim();
+    parts = parts.filter(id => {
+        const part = inventory[id];
+        return part.name.toLowerCase().includes(search) ||
+               String(part.id).toLowerCase().includes(search) ||  // ✅ FIXED
+               (part.barcode && part.barcode.toLowerCase().includes(search));
+    });
+}
     
     // Filter by category
     if (currentViewMode === 'category') {
