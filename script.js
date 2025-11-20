@@ -44,7 +44,7 @@ let uploadedImageUrl = '';
 
 // Current filter state
 let currentCategoryFilter = '';
-let currentViewMode = 'all';
+let currentViewMode = 'browse';
 let currentBrowsingCategory = null;
 
 // ============================================
