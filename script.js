@@ -353,7 +353,8 @@ async function loadCategories() {
                 categories[row[0]] = {
                     name: row[1],
                     parent: row[2] || null,
-                    order: parseInt(row[3]) || 0
+                    order: parseInt(row[3]) || 0,
+                    imageUrl: row[4] || ''  // Add imageUrl column (5th column)
                 };
             }
         }
@@ -1005,13 +1006,28 @@ function createCategoryCard(catId) {
     
     const partCount = getPartsInExactCategory(catId).length;
     
-   const subcatCount = Object.keys(categories).filter(id => {
-    return categories[id].parent === catId;
-}).length;
+    const subcatCount = Object.keys(categories).filter(id => {
+        return categories[id].parent === catId;
+    }).length;
     
-    const icon = subcatCount > 0 ? '📂' : '📦';  // Open folder for categories with subs
+    const icon = subcatCount > 0 ? '📂' : '📦';
+    
+    // Handle category image
+    let imageHTML = '';
+    if (cat.imageUrl && cat.imageUrl.trim() !== '') {
+        let imageUrl = cat.imageUrl;
+        if (imageUrl.includes('drive.google.com')) {
+            const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+            if (fileIdMatch) {
+                const fileId = fileIdMatch[1] || fileIdMatch[2];
+                imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`;
+            }
+        }
+        imageHTML = `<img src="${imageUrl}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 8px 8px 0 0; margin-bottom: 10px;" loading="lazy">`;
+    }
     
     card.innerHTML = `
+        ${imageHTML}
         <div class="category-icon">${icon}</div>
         <div class="category-name">${cat.name}</div>
         <div class="category-count">${partCount} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
@@ -1024,7 +1040,6 @@ function createCategoryCard(catId) {
     
     return card;
 }
-
 function getPartsInCategory(categoryId) {
     const categoryIds = [categoryId];
     
