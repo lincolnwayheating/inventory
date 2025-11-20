@@ -345,8 +345,6 @@ async function loadCategories() {
     const response = await fetch(SCRIPT_URL + '?action=readCategories');
     const result = await response.json();
     
-    console.log('Categories raw data:', result.data); // ADD THIS LINE
-    
     if (result.success && result.data) {
         categories = {};
         for (let i = 1; i < result.data.length; i++) {
@@ -357,10 +355,8 @@ async function loadCategories() {
                     parent: row[2] || null,
                     imageUrl: row[3] || ''
                 };
-                console.log('Loaded category:', row[1], 'with imageUrl:', row[3]); // ADD THIS LINE
             }
         }
-        console.log('Final categories object:', categories); // ADD THIS LINE
     }
 }
 async function loadTrucks() {
@@ -1012,10 +1008,10 @@ function createCategoryCard(catId) {
         return categories[id].parent === catId;
     }).length;
     
-    const icon = subcatCount > 0 ? '📂' : '📦';
-    
     // Handle category image
     let imageHTML = '';
+    let showIcon = true;  // Only show icon if no image
+    
     if (cat.imageUrl && typeof cat.imageUrl === 'string' && cat.imageUrl.trim() !== '') {
         let imageUrl = cat.imageUrl;
         if (imageUrl.includes('drive.google.com')) {
@@ -1026,11 +1022,14 @@ function createCategoryCard(catId) {
             }
         }
         imageHTML = `<img src="${imageUrl}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 8px 8px 0 0; margin-bottom: 10px;" loading="lazy">`;
+        showIcon = false;  // Don't show icon when we have an image
     }
+    
+    const icon = subcatCount > 0 ? '📂' : '📦';
     
     card.innerHTML = `
         ${imageHTML}
-        <div class="category-icon">${icon}</div>
+        ${showIcon ? `<div class="category-icon">${icon}</div>` : ''}
         <div class="category-name">${cat.name}</div>
         <div class="category-count">${partCount} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
     `;
