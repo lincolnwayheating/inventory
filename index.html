@@ -308,12 +308,13 @@
                 <button class="btn btn-primary" id="addCategoryBtn">Add</button>
             </div>
             
-            <div id="categoryTree"></div>
+            <div class="form-group" style="margin-bottom: 20px;">
+                <label>Category Image URL (optional)</label>
+                <input type="text" id="newCategoryImage" placeholder="https://drive.google.com/...">
+            </div>
             
-        <div class="form-group">
-    <label>Category Image URL (optional)</label>
-    <input type="text" id="newCategoryImage" placeholder="https://drive.google.com/...">
-</div>
+            <div id="categoryTree"></div>
+        </div>
         
         <!-- History -->
         <div id="history" class="content">
@@ -405,7 +406,7 @@
 </div>
 
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
-<script src="script.js?v=10"></script>
+<script src="script.js?v=11"></script>
 
 </body>
 </html>
