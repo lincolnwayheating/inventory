@@ -769,10 +769,18 @@ function updateDashboard() {
                 const item = document.createElement('div');
                 item.className = 'low-stock-item' + (part[userTruck] === 0 ? ' critical' : '');
                 
-                let imageHTML = '';
-                if (part.imageUrl) {
-                    imageHTML = `<img src="${part.imageUrl}" alt="${part.name}">`;
-                }
+               let imageHTML = '';
+if (part.imageUrl && part.imageUrl.trim() !== '') {
+    let imageUrl = part.imageUrl;
+    if (imageUrl.includes('drive.google.com')) {
+        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+        if (fileIdMatch) {
+            const fileId = fileIdMatch[1] || fileIdMatch[2];
+            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w300`;
+        }
+    }
+    imageHTML = `<img src="${imageUrl}" alt="${part.name}" loading="lazy">`;
+}
                 
                 item.innerHTML = `
                     ${imageHTML}
@@ -812,9 +820,17 @@ function updateDashboard() {
                 item.className = 'low-stock-item' + (part[truckId] === 0 ? ' critical' : '');
                 
                 let imageHTML = '';
-                if (part.imageUrl) {
-                    imageHTML = `<img src="${part.imageUrl}" alt="${part.name}">`;
-                }
+if (part.imageUrl && part.imageUrl.trim() !== '') {
+    let imageUrl = part.imageUrl;
+    if (imageUrl.includes('drive.google.com')) {
+        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+        if (fileIdMatch) {
+            const fileId = fileIdMatch[1] || fileIdMatch[2];
+            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w300`;
+        }
+    }
+    imageHTML = `<img src="${imageUrl}" alt="${part.name}" loading="lazy">`;
+}
                 
                 item.innerHTML = `
                     ${imageHTML}
@@ -851,9 +867,17 @@ function updateDashboard() {
             item.className = 'low-stock-item' + (part.shop === 0 ? ' critical' : '');
             
             let imageHTML = '';
-            if (part.imageUrl) {
-                imageHTML = `<img src="${part.imageUrl}" alt="${part.name}">`;
-            }
+if (part.imageUrl && part.imageUrl.trim() !== '') {
+    let imageUrl = part.imageUrl;
+    if (imageUrl.includes('drive.google.com')) {
+        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+        if (fileIdMatch) {
+            const fileId = fileIdMatch[1] || fileIdMatch[2];
+            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w300`;
+        }
+    }
+    imageHTML = `<img src="${imageUrl}" alt="${part.name}" loading="lazy">`;
+}
             
             item.innerHTML = `
                 ${imageHTML}
