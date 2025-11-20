@@ -2491,6 +2491,7 @@ function renderCategoryTree() {
 async function addCategory() {
     const name = document.getElementById('newCategoryName').value.trim();
     const parent = document.getElementById('newCategoryParent').value;
+    const imageUrl = document.getElementById('newCategoryImage').value.trim();
     
     if (!name) {
         showToast('Enter category name', 'error');
@@ -2507,13 +2508,15 @@ async function addCategory() {
                 action: 'saveCategory',
                 name: name,
                 parentName: parent,
-                order: Object.keys(categories).length
+                order: Object.keys(categories).length,
+                imageUrl: imageUrl
             })
         });
         
         await loadCategories();
         document.getElementById('newCategoryName').value = '';
         document.getElementById('newCategoryParent').value = '';
+        document.getElementById('newCategoryImage').value = '';
         renderCategoryTree();
         populateDropdowns();
         showProcessing(false);
@@ -2523,7 +2526,6 @@ async function addCategory() {
         showToast('Error adding category', 'error');
     }
 }
-
 async function deleteCategory(id) {
     if (!confirm('Delete this category? Parts in this category will be set to "Other".')) return;
     
