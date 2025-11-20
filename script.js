@@ -1013,7 +1013,7 @@ function createCategoryCard(catId) {
     
     // Handle category image
     let imageHTML = '';
-    if (cat.imageUrl && cat.imageUrl.trim() !== '') {
+    if (cat.imageUrl && typeof cat.imageUrl === 'string' && cat.imageUrl.trim() !== '') {
         let imageUrl = cat.imageUrl;
         if (imageUrl.includes('drive.google.com')) {
             const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
