@@ -484,21 +484,219 @@ async function loadInventoryQuantities() {
 // NEW: Silent background refresh (quantities only)
 // ============================================
 
+// ============================================
+// NEW: Silent background refresh (quantities only) - IMPROVED
+// ============================================
+
 async function refreshQuantitiesOnly() {
     try {
-        await loadInventoryQuantities();
-        updateDashboard();
+        // Fetch fresh quantities
+        const response = await fetch(SCRIPT_URL + '?action=readInventory');
+        const result = await response.json();
         
-        // Update active tab if needed
+        if (result.success && result.data && result.data.length > 1) {
+            const headers = result.data[0];
+            
+            // Update quantities in existing inventory object (keeps images intact)
+            for (let i = 1; i < result.data.length; i++) {
+                const row = result.data[i];
+                const partId = row[0];
+                
+                if (partId && inventory[partId]) {
+                    // Only update quantities, keep everything else
+                    inventory[partId].shop = parseInt(row[5]) || 0;
+                    
+                    Object.keys(trucks).forEach(truckId => {
+                        const truckColIndex = headers.indexOf(truckId);
+                        if (truckColIndex !== -1) {
+                            inventory[partId][truckId] = parseInt(row[truckColIndex]) || 0;
+                        }
+                    });
+                    
+                    const minStockIndex = headers.indexOf('MinStock');
+                    if (minStockIndex !== -1) {
+                        inventory[partId].minStock = parseInt(row[minStockIndex]) || 0;
+                        
+                        Object.keys(trucks).forEach(truckId => {
+                            const minTruckCol = headers.indexOf('MinTruck-' + truckId);
+                            if (minTruckCol !== -1) {
+                                inventory[partId]['minTruck_' + truckId] = parseInt(row[minTruckCol]) || 0;
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Smart update: Only refresh what's visible
         const activeTab = document.querySelector('.content.active');
         if (activeTab) {
             const tabId = activeTab.id;
-            if (tabId === 'all-parts') renderAllParts();
-            if (tabId === 'quick-load') updateQuickLoadList();
+            
+            if (tabId === 'dashboard') {
+                updateDashboardQuantitiesOnly(); // New smart function
+            } else if (tabId === 'all-parts') {
+                updatePartsGridQuantitiesOnly(); // New smart function
+            } else if (tabId === 'quick-load') {
+                updateQuickLoadList();
+            }
         }
+        
     } catch (error) {
         console.error('Background refresh error:', error);
     }
+}
+
+// ============================================
+// NEW: Smart Dashboard Update (no image reload)
+// ============================================
+
+function updateDashboardQuantitiesOnly() {
+    const container = document.getElementById('lowStockContainer');
+    if (!container) return;
+    
+    // Update existing items instead of rebuilding
+    const items = container.querySelectorAll('.low-stock-item');
+    
+    items.forEach(item => {
+        // Extract part ID from the onclick handler or data attribute
+        const onclickStr = item.getAttribute('onclick');
+        if (onclickStr) {
+            const match = onclickStr.match(/openPartDetail\('([^']+)'\)/);
+            if (match) {
+                const partId = match[1];
+                const part = inventory[partId];
+                
+                if (part) {
+                    // Find and update the text content (skip the image)
+                    const textNodes = Array.from(item.childNodes).filter(node => 
+                        node.nodeType === Node.TEXT_NODE || node.nodeName === 'STRONG' || node.nodeName === 'SMALL' || node.nodeName === 'BR'
+                    );
+                    
+                    // Just rebuild the text, keep the image
+                    const img = item.querySelector('img');
+                    const imgHTML = img ? img.outerHTML : '';
+                    
+                    // Determine which truck this is for
+                    let truckId = userTruck;
+                    const section = item.closest('.low-stock-section');
+                    if (section) {
+                        const heading = section.querySelector('h3');
+                        if (heading) {
+                            // Extract truck ID from heading
+                            Object.keys(trucks).forEach(id => {
+                                if (heading.textContent.includes(trucks[id].name)) {
+                                    truckId = id;
+                                }
+                            });
+                        }
+                    }
+                    
+                    let currentQty, minQty, needed;
+                    
+                    if (truckId && truckId !== 'shop') {
+                        currentQty = part[truckId];
+                        minQty = part['minTruck_' + truckId] || 0;
+                        needed = minQty - currentQty;
+                    } else {
+                        currentQty = part.shop;
+                        minQty = part.minStock;
+                        needed = minQty - currentQty;
+                    }
+                    
+                    // Update with new quantities
+                    item.innerHTML = `
+                        ${imgHTML}
+                        <strong>${part.name}</strong><br>
+                        <small>Part #: ${part.id}</small><br>
+                        Current: ${currentQty} | Min: ${minQty} | Need: ${needed}
+                    `;
+                    item.onclick = () => openPartDetail(partId);
+                }
+            }
+        }
+    });
+    
+    // Check if we need to rebuild (items added/removed from low stock)
+    // Only rebuild if the structure changed
+    const currentLowStockCount = container.querySelectorAll('.low-stock-item').length;
+    const actualLowStockCount = getLowStockCount();
+    
+    if (currentLowStockCount !== actualLowStockCount) {
+        // Structure changed, do full rebuild
+        updateDashboard();
+    }
+}
+
+// ============================================
+// NEW: Smart Parts Grid Update (no image reload)
+// ============================================
+
+function updatePartsGridQuantitiesOnly() {
+    const grid = document.getElementById('allPartsGrid');
+    if (!grid || grid.style.display === 'none') return;
+    
+    // Update stock badges only
+    const cards = grid.querySelectorAll('.part-card');
+    
+    cards.forEach(card => {
+        const onclickStr = card.getAttribute('onclick');
+        if (onclickStr) {
+            const match = onclickStr.match(/openPartDetail\('([^']+)'\)/);
+            if (match) {
+                const partId = match[1];
+                const part = inventory[partId];
+                
+                if (part) {
+                    // Find and update only the stock badge
+                    const stockBadge = card.querySelector('.stock-badge');
+                    if (stockBadge) {
+                        let shopStatus = 'stock-ok';
+                        if (part.shop < part.minStock) shopStatus = 'stock-low';
+                        if (part.shop === 0) shopStatus = 'stock-out';
+                        
+                        stockBadge.className = `stock-badge ${shopStatus}`;
+                        stockBadge.textContent = `Shop: ${part.shop}`;
+                    }
+                }
+            }
+        }
+    });
+}
+
+// ============================================
+// NEW: Helper to count low stock items
+// ============================================
+
+function getLowStockCount() {
+    const activeSeasons = settings.ActiveSeasons ? settings.ActiveSeasons.split(',') : ['heating', 'cooling', 'year-round'];
+    let count = 0;
+    
+    // Count user's truck low stock
+    if (userTruck && trucks[userTruck]) {
+        count += Object.keys(inventory).filter(id => {
+            const part = inventory[id];
+            const minForTruck = part['minTruck_' + userTruck] || 0;
+            return part[userTruck] < minForTruck && activeSeasons.includes(part.season);
+        }).length;
+    }
+    
+    // Count other trucks
+    Object.keys(trucks).filter(id => trucks[id].active && id !== userTruck).forEach(truckId => {
+        count += Object.keys(inventory).filter(id => {
+            const part = inventory[id];
+            const minForTruck = part['minTruck_' + truckId] || 0;
+            return part[truckId] < minForTruck && activeSeasons.includes(part.season);
+        }).length;
+    });
+    
+    // Count shop
+    count += Object.keys(inventory).filter(id => {
+        const part = inventory[id];
+        return part.shop < part.minStock && activeSeasons.includes(part.season);
+    }).length;
+    
+    return count;
 }
 
 // ============================================
