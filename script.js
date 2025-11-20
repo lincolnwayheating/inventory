@@ -345,6 +345,8 @@ async function loadCategories() {
     const response = await fetch(SCRIPT_URL + '?action=readCategories');
     const result = await response.json();
     
+    console.log('Categories raw data:', result.data); // ADD THIS LINE
+    
     if (result.success && result.data) {
         categories = {};
         for (let i = 1; i < result.data.length; i++) {
@@ -353,10 +355,12 @@ async function loadCategories() {
                 categories[row[0]] = {
                     name: row[1],
                     parent: row[2] || null,
-                    imageUrl: row[3] || ''  // Column D is index 3 (A=0, B=1, C=2, D=3)
+                    imageUrl: row[3] || ''
                 };
+                console.log('Loaded category:', row[1], 'with imageUrl:', row[3]); // ADD THIS LINE
             }
         }
+        console.log('Final categories object:', categories); // ADD THIS LINE
     }
 }
 async function loadTrucks() {
