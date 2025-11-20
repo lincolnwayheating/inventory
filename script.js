@@ -353,13 +353,12 @@ async function loadCategories() {
                 categories[row[0]] = {
                     name: row[1],
                     parent: row[2] || null,
-                    imageUrl: row[3] || ''  // Column D (index 3)
+                    imageUrl: row[3] || ''  // Column D is index 3 (A=0, B=1, C=2, D=3)
                 };
             }
         }
     }
 }
-
 async function loadTrucks() {
     const response = await fetch(SCRIPT_URL + '?action=readTrucks');
     const result = await response.json();
