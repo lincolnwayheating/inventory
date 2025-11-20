@@ -1,6 +1,6 @@
 // ============================================
-// HVAC INVENTORY - COMPLETE v2
-// All Features Restored + Improvements
+// HVAC INVENTORY - COMPLETE v3 - OPTIMIZED
+// Speed improvements: parallel loading, caching, auto-refresh
 // ============================================
 
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwQ16GPuzCPNXs9sSs16Bi4Ys3-JsMNyyHoXibRJ9uGirPE5J15b_DvSZ-RDGM_j1k/exec';
@@ -48,6 +48,55 @@ let currentViewMode = 'browse';
 let currentBrowsingCategory = null;
 
 // ============================================
+// NEW: Cache management
+// ============================================
+const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+const AUTO_REFRESH_INTERVAL = 3 * 60 * 1000; // 3 minutes
+let autoRefreshTimer = null;
+
+// ============================================
+// NEW: Cache Helper Functions
+// ============================================
+
+function getCachedData(key) {
+    try {
+        const cached = localStorage.getItem(key);
+        if (!cached) return null;
+        
+        const data = JSON.parse(cached);
+        const now = Date.now();
+        
+        // Check if expired
+        if (now - data.timestamp > CACHE_DURATION) {
+            localStorage.removeItem(key);
+            return null;
+        }
+        
+        return data.value;
+    } catch (error) {
+        console.error('Cache read error:', error);
+        return null;
+    }
+}
+
+function setCachedData(key, value) {
+    try {
+        const data = {
+            value: value,
+            timestamp: Date.now()
+        };
+        localStorage.setItem(key, JSON.stringify(data));
+    } catch (error) {
+        console.error('Cache write error:', error);
+    }
+}
+
+function clearCache() {
+    const keys = ['cache_categories', 'cache_trucks', 'cache_settings', 'cache_part_details'];
+    keys.forEach(key => localStorage.removeItem(key));
+}
+
+// ============================================
 // INITIALIZATION
 // ============================================
 
@@ -60,12 +109,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Auto-focus PIN input on desktop
     const pinInput = document.getElementById('pinInput');
     if (pinInput) {
-        // Focus immediately
         setTimeout(() => {
             pinInput.focus();
         }, 100);
         
-        // Keep focus on PIN input
         pinInput.addEventListener('blur', function() {
             if (document.getElementById('loginScreen').style.display !== 'none') {
                 setTimeout(() => this.focus(), 100);
@@ -83,10 +130,16 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     
     pinInput.addEventListener('input', function(e) {
-        // Only allow numbers
         this.value = this.value.replace(/[^0-9]/g, '');
         if (this.value.length === 4) {
             setTimeout(() => login(), 100);
+        }
+    });
+    
+    // NEW: Auto-refresh on app resume
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden && currentUser) {
+            refreshQuantitiesOnly();
         }
     });
     
@@ -95,25 +148,19 @@ document.addEventListener('DOMContentLoaded', function() {
     let barcodeTimeout = null;
     
     document.addEventListener('keypress', function(e) {
-        // Ignore if user is typing in an input field (except during scan mode)
         if (!scanModeActive && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
             return;
         }
         
-        // Clear timeout
         clearTimeout(barcodeTimeout);
         
-        // Add character to buffer
         if (e.key === 'Enter') {
-            // Barcode complete
             if (barcodeBuffer.length > 3) {
                 handlePhysicalScannerInput(barcodeBuffer);
             }
             barcodeBuffer = '';
         } else {
             barcodeBuffer += e.key;
-            
-            // Reset buffer after 100ms of no input
             barcodeTimeout = setTimeout(() => {
                 barcodeBuffer = '';
             }, 100);
@@ -179,7 +226,6 @@ async function login() {
                 userTruck = user.truck;
                 canEditPIN = user.canEditPIN;
                 
-                // Log login
                 await logLoginHistory(user.name, pin, 'Login', 'User logged in');
                 
                 document.getElementById('loginScreen').style.display = 'none';
@@ -223,6 +269,12 @@ async function login() {
 
 function logout() {
     if (confirm('Logout?')) {
+        // NEW: Stop auto-refresh timer
+        if (autoRefreshTimer) {
+            clearInterval(autoRefreshTimer);
+            autoRefreshTimer = null;
+        }
+        
         currentUser = null;
         currentUserPin = null;
         isOwner = false;
@@ -232,35 +284,37 @@ function logout() {
         document.getElementById('loginScreen').style.display = 'flex';
         document.getElementById('appContainer').style.display = 'none';
         
-        // Re-focus PIN input
         setTimeout(() => {
             document.getElementById('pinInput').focus();
         }, 100);
     }
 }
 
+// ============================================
+// NEW: Optimized init with parallel loading and caching
+// ============================================
+
 async function init() {
     showProcessing(true);
     
     try {
-        await loadSettings();
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // STEP 1: Load static data (parallel + cached)
+        await loadStaticData();
         
-        await loadCategories();
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // STEP 2: Load quantities only
+        await loadInventoryQuantities();
         
-        await loadTrucks();
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
-        await loadInventory();
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
+        // STEP 3: Load history
         await loadHistory();
         
+        // STEP 4: Build UI
         buildTabs();
         setupEventListeners();
         populateDropdowns();
         updateDashboard();
+        
+        // NEW: Start auto-refresh timer
+        startAutoRefresh();
         
         showProcessing(false);
     } catch (error) {
@@ -270,24 +324,211 @@ async function init() {
     }
 }
 
+// ============================================
+// NEW: Load static data with caching and parallel requests
+// ============================================
+
+async function loadStaticData() {
+    // Try to load from cache first
+    const cachedSettings = getCachedData('cache_settings');
+    const cachedCategories = getCachedData('cache_categories');
+    const cachedTrucks = getCachedData('cache_trucks');
+    
+    // If all cached, use cache (FAST!)
+    if (cachedSettings && cachedCategories && cachedTrucks) {
+        settings = cachedSettings;
+        categories = cachedCategories;
+        trucks = cachedTrucks;
+        return;
+    }
+    
+    // Otherwise, fetch fresh in PARALLEL (faster than sequential)
+    const [settingsRes, categoriesRes, trucksRes] = await Promise.all([
+        fetch(SCRIPT_URL + '?action=readSettings'),
+        fetch(SCRIPT_URL + '?action=readCategories'),
+        fetch(SCRIPT_URL + '?action=readTrucks')
+    ]);
+    
+    const [settingsData, categoriesData, trucksData] = await Promise.all([
+        settingsRes.json(),
+        categoriesRes.json(),
+        trucksRes.json()
+    ]);
+    
+    // Process settings
+    if (settingsData.success && settingsData.data) {
+        settings = {};
+        for (let i = 1; i < settingsData.data.length; i++) {
+            const row = settingsData.data[i];
+            if (row[0]) {
+                settings[row[0]] = row[1];
+            }
+        }
+        if (!settings.ActiveSeasons) {
+            settings.ActiveSeasons = 'heating,cooling,year-round';
+        }
+        setCachedData('cache_settings', settings);
+    }
+    
+    // Process categories
+    if (categoriesData.success && categoriesData.data) {
+        categories = {};
+        for (let i = 1; i < categoriesData.data.length; i++) {
+            const row = categoriesData.data[i];
+            if (row[0]) {
+                categories[row[0]] = {
+                    name: row[1],
+                    parent: row[2] || null,
+                    imageUrl: row[3] || ''
+                };
+            }
+        }
+        setCachedData('cache_categories', categories);
+    }
+    
+    // Process trucks
+    if (trucksData.success && trucksData.data) {
+        trucks = {};
+        for (let i = 1; i < trucksData.data.length; i++) {
+            const row = trucksData.data[i];
+            if (row[0]) {
+                trucks[row[0]] = {
+                    name: row[1],
+                    active: (row[2] === 'TRUE' || row[2] === true)
+                };
+            }
+        }
+        setCachedData('cache_trucks', trucks);
+    }
+}
+
+// ============================================
+// NEW: Load inventory quantities (caches part details separately)
+// ============================================
+
+async function loadInventoryQuantities() {
+    const response = await fetch(SCRIPT_URL + '?action=readInventory');
+    const result = await response.json();
+    
+    if (result.success && result.data && result.data.length > 1) {
+        const headers = result.data[0];
+        const cachedPartDetails = getCachedData('cache_part_details') || {};
+        
+        inventory = {};
+        
+        for (let i = 1; i < result.data.length; i++) {
+            const row = result.data[i];
+            if (row[0]) {
+                const partId = row[0];
+                
+                // Use cached details if available, otherwise create new
+                const item = cachedPartDetails[partId] || {
+                    id: partId,
+                    name: row[1] || '',
+                    category: row[2] || 'other',
+                    barcode: row[3] || '',
+                    imageUrl: row[4] || ''
+                };
+                
+                // Always update quantities (fresh data)
+                item.shop = parseInt(row[5]) || 0;
+                
+                Object.keys(trucks).forEach(truckId => {
+                    const truckColIndex = headers.indexOf(truckId);
+                    if (truckColIndex !== -1) {
+                        item[truckId] = parseInt(row[truckColIndex]) || 0;
+                    } else {
+                        item[truckId] = 0;
+                    }
+                });
+                
+                const minStockIndex = headers.indexOf('MinStock');
+                if (minStockIndex !== -1) {
+                    item.minStock = parseInt(row[minStockIndex]) || 0;
+                    
+                    Object.keys(trucks).forEach(truckId => {
+                        const minTruckCol = headers.indexOf('MinTruck-' + truckId);
+                        if (minTruckCol !== -1) {
+                            item['minTruck_' + truckId] = parseInt(row[minTruckCol]) || 0;
+                        } else {
+                            item['minTruck_' + truckId] = 0;
+                        }
+                    });
+                    
+                    item.price = parseFloat(row[minStockIndex + Object.keys(trucks).length + 1]) || 0;
+                    item.purchaseLink = row[minStockIndex + Object.keys(trucks).length + 2] || '';
+                    item.season = row[minStockIndex + Object.keys(trucks).length + 3] || 'year-round';
+                }
+                
+                inventory[partId] = item;
+            }
+        }
+        
+        // Cache part details (WITHOUT quantities for smaller cache size)
+        const partDetailsToCache = {};
+        Object.keys(inventory).forEach(partId => {
+            const part = inventory[partId];
+            partDetailsToCache[partId] = {
+                id: part.id,
+                name: part.name,
+                category: part.category,
+                barcode: part.barcode,
+                imageUrl: part.imageUrl
+            };
+        });
+        setCachedData('cache_part_details', partDetailsToCache);
+    }
+}
+
+// ============================================
+// NEW: Silent background refresh (quantities only)
+// ============================================
+
+async function refreshQuantitiesOnly() {
+    try {
+        await loadInventoryQuantities();
+        updateDashboard();
+        
+        // Update active tab if needed
+        const activeTab = document.querySelector('.content.active');
+        if (activeTab) {
+            const tabId = activeTab.id;
+            if (tabId === 'all-parts') renderAllParts();
+            if (tabId === 'quick-load') updateQuickLoadList();
+        }
+    } catch (error) {
+        console.error('Background refresh error:', error);
+    }
+}
+
+// ============================================
+// NEW: Start auto-refresh timer (every 3 minutes)
+// ============================================
+
+function startAutoRefresh() {
+    if (autoRefreshTimer) {
+        clearInterval(autoRefreshTimer);
+    }
+    
+    autoRefreshTimer = setInterval(() => {
+        refreshQuantitiesOnly();
+    }, AUTO_REFRESH_INTERVAL);
+}
+
+// ============================================
+// MODIFIED: refreshData - now clears cache and reloads everything
+// ============================================
+
 async function refreshData() {
     showProcessing(true);
     
     try {
-        const timestamp = Date.now();
+        // Clear cache to force fresh data
+        clearCache();
         
-        await loadSettings();
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
-        await loadCategories();
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
-        await loadTrucks();
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
-        await loadInventory();
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
+        // Reload everything (parallel where possible)
+        await loadStaticData();
+        await loadInventoryQuantities();
         await loadHistory();
         
         populateDropdowns();
@@ -313,10 +554,17 @@ async function refreshData() {
 }
 
 // ============================================
-// DATA LOADING
+// MODIFIED: Individual load functions now use cache
+// (kept for backward compatibility with rest of code)
 // ============================================
 
 async function loadSettings() {
+    const cached = getCachedData('cache_settings');
+    if (cached) {
+        settings = cached;
+        return;
+    }
+    
     try {
         const response = await fetch(SCRIPT_URL + '?action=readSettings');
         const result = await response.json();
@@ -330,10 +578,10 @@ async function loadSettings() {
                 }
             }
             
-            // Set default if not exists
             if (!settings.ActiveSeasons) {
                 settings.ActiveSeasons = 'heating,cooling,year-round';
             }
+            setCachedData('cache_settings', settings);
         }
     } catch (error) {
         console.error('Load settings error:', error);
@@ -342,6 +590,12 @@ async function loadSettings() {
 }
 
 async function loadCategories() {
+    const cached = getCachedData('cache_categories');
+    if (cached) {
+        categories = cached;
+        return;
+    }
+    
     const response = await fetch(SCRIPT_URL + '?action=readCategories');
     const result = await response.json();
     
@@ -357,9 +611,17 @@ async function loadCategories() {
                 };
             }
         }
+        setCachedData('cache_categories', categories);
     }
 }
+
 async function loadTrucks() {
+    const cached = getCachedData('cache_trucks');
+    if (cached) {
+        trucks = cached;
+        return;
+    }
+    
     const response = await fetch(SCRIPT_URL + '?action=readTrucks');
     const result = await response.json();
     
@@ -374,63 +636,13 @@ async function loadTrucks() {
                 };
             }
         }
+        setCachedData('cache_trucks', trucks);
     }
 }
 
 async function loadInventory() {
-    const response = await fetch(SCRIPT_URL + '?action=readInventory');
-    const result = await response.json();
-    
-    if (result.success && result.data && result.data.length > 1) {
-        inventory = {};
-        const headers = result.data[0];
-        
-        for (let i = 1; i < result.data.length; i++) {
-            const row = result.data[i];
-            if (row[0]) {
-                const item = {
-                    id: row[0],
-                    name: row[1] || '',
-                    category: row[2] || 'other',
-                    barcode: row[3] || '',
-                    imageUrl: row[4] || '',
-                    shop: parseInt(row[5]) || 0
-                };
-                
-                // Add truck quantities
-                Object.keys(trucks).forEach(truckId => {
-                    const truckColIndex = headers.indexOf(truckId);
-                    if (truckColIndex !== -1) {
-                        item[truckId] = parseInt(row[truckColIndex]) || 0;
-                    } else {
-                        item[truckId] = 0;
-                    }
-                });
-                
-                // Find MinStock column
-                const minStockIndex = headers.indexOf('MinStock');
-                if (minStockIndex !== -1) {
-                    item.minStock = parseInt(row[minStockIndex]) || 0;
-                    
-                    // Get per-truck minimums
-                    Object.keys(trucks).forEach(truckId => {
-                        const minTruckCol = headers.indexOf('MinTruck-' + truckId);
-                        if (minTruckCol !== -1) {
-                            item['minTruck_' + truckId] = parseInt(row[minTruckCol]) || 0;
-                        } else {
-                            item['minTruck_' + truckId] = 0;
-                        }
-                    });
-                    
-                    item.price = parseFloat(row[minStockIndex + Object.keys(trucks).length + 1]) || 0;
-                    item.purchaseLink = row[minStockIndex + Object.keys(trucks).length + 2] || '';
-                    item.season = row[minStockIndex + Object.keys(trucks).length + 3] || 'year-round';
-                }
-                
-                inventory[row[0]] = item;
-            }
-        }
-    }
+    // Just call the new optimized version
+    await loadInventoryQuantities();
 }
 
 async function loadHistory() {
