@@ -51,7 +51,7 @@ let currentBrowsingCategory = null;
 // NEW: Cache management
 // ============================================
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
-const AUTO_REFRESH_INTERVAL = 30 * 1000; // 30 seconds
+const AUTO_REFRESH_INTERVAL = 10 * 1000; // 10 seconds
 let autoRefreshTimer = null;
 
 // ============================================
