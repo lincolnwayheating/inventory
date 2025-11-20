@@ -1409,9 +1409,17 @@ function openPartDetail(partId) {
     document.getElementById('partDetailTitle').textContent = part.name;
     
     let imageHTML = '';
-    if (part.imageUrl) {
-        imageHTML = `<img src="${part.imageUrl}" style="max-width: 200px; max-height: 200px; border-radius: 12px; margin-bottom: 20px;" onerror="this.style.display='none';">`;
+if (part.imageUrl && part.imageUrl.trim() !== '') {
+    let imageUrl = part.imageUrl;
+    if (imageUrl.includes('drive.google.com')) {
+        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+        if (fileIdMatch) {
+            const fileId = fileIdMatch[1] || fileIdMatch[2];
+            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`;  // Larger size!
+        }
     }
+    imageHTML = `<img src="${imageUrl}" style="max-width: 400px; max-height: 400px; border-radius: 12px; margin-bottom: 20px; display: block;" loading="lazy">`;
+}
     
     let stockHTML = '<h3>Current Stock</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px;">';
     stockHTML += `<div class="stock-badge ${part.shop < part.minStock ? 'stock-low' : 'stock-ok'}">Shop: ${part.shop} (Min: ${part.minStock})</div>`;
