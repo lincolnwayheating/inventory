@@ -492,7 +492,7 @@ function buildTabs() {
         { id: 'add-part', label: '➕ Add Part', show: isOwner },
         { id: 'categories', label: '📁 Categories', show: isOwner },
         { id: 'history', label: '📋 History', show: true },
-        { id: 'settings', label: '⚙️ Settings', show: true }
+        { id: 'settings', label: '⚙️ Settings', show: isOwner }
     ];
     
     tabs.forEach((tab, i) => {
