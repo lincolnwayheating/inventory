@@ -353,8 +353,7 @@ async function loadCategories() {
                 categories[row[0]] = {
                     name: row[1],
                     parent: row[2] || null,
-                    order: parseInt(row[3]) || 0,
-                    imageUrl: row[4] || ''  // Add imageUrl column (5th column)
+                    imageUrl: row[3] || ''  // Column D (index 3)
                 };
             }
         }
