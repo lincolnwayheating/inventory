@@ -488,22 +488,54 @@ async function loadInventoryQuantities() {
 // NEW: Silent background refresh (quantities only) - IMPROVED
 // ============================================
 
+// ============================================
+// NEW: Silent background refresh with rate limit protection
+// ============================================
+
+let consecutiveRefreshErrors = 0;
+const MAX_ERRORS_BEFORE_PAUSE = 3;
+
 async function refreshQuantitiesOnly() {
     try {
-        // Fetch fresh quantities
+        // If too many errors, pause auto-refresh
+        if (consecutiveRefreshErrors >= MAX_ERRORS_BEFORE_PAUSE) {
+            console.warn('⚠️ Too many refresh errors. Pausing auto-refresh for 5 minutes.');
+            
+            // Stop the current timer
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+            }
+            
+            // Restart after 5 minutes
+            setTimeout(() => {
+                console.log('🔄 Resuming auto-refresh');
+                consecutiveRefreshErrors = 0;
+                startAutoRefresh();
+            }, 5 * 60 * 1000); // 5 minutes
+            
+            return;
+        }
+        
         const response = await fetch(SCRIPT_URL + '?action=readInventory');
+        
+        // Check for rate limit
+        if (response.status === 429) {
+            consecutiveRefreshErrors++;
+            console.error('⚠️ Rate limited. Pausing refresh.');
+            return;
+        }
+        
         const result = await response.json();
         
         if (result.success && result.data && result.data.length > 1) {
             const headers = result.data[0];
             
-            // Update quantities in existing inventory object (keeps images intact)
+            // Update quantities in existing inventory object
             for (let i = 1; i < result.data.length; i++) {
                 const row = result.data[i];
                 const partId = row[0];
                 
                 if (partId && inventory[partId]) {
-                    // Only update quantities, keep everything else
                     inventory[partId].shop = parseInt(row[5]) || 0;
                     
                     Object.keys(trucks).forEach(truckId => {
@@ -526,6 +558,9 @@ async function refreshQuantitiesOnly() {
                     }
                 }
             }
+            
+            // Reset error counter on success
+            consecutiveRefreshErrors = 0;
         }
         
         // Smart update: Only refresh what's visible
@@ -534,19 +569,19 @@ async function refreshQuantitiesOnly() {
             const tabId = activeTab.id;
             
             if (tabId === 'dashboard') {
-                updateDashboardQuantitiesOnly(); // New smart function
+                updateDashboardQuantitiesOnly();
             } else if (tabId === 'all-parts') {
-                updatePartsGridQuantitiesOnly(); // New smart function
+                updatePartsGridQuantitiesOnly();
             } else if (tabId === 'quick-load') {
                 updateQuickLoadList();
             }
         }
         
     } catch (error) {
+        consecutiveRefreshErrors++;
         console.error('Background refresh error:', error);
     }
 }
-
 // ============================================
 // NEW: Smart Dashboard Update (no image reload)
 // ============================================
