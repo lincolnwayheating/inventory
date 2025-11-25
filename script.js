@@ -1,6 +1,7 @@
 // ============================================
-// HVAC INVENTORY - COMPLETE v3 - OPTIMIZED
+// HVAC INVENTORY - COMPLETE v4 - WITH LOCATION TRACKING
 // Speed improvements: parallel loading, caching, auto-refresh
+// Location: Address reverse geocoding + Lat/Lon
 // ============================================
 
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwQ16GPuzCPNXs9sSs16Bi4Ys3-JsMNyyHoXibRJ9uGirPE5J15b_DvSZ-RDGM_j1k/exec';
@@ -47,15 +48,100 @@ let currentCategoryFilter = '';
 let currentViewMode = 'browse';
 let currentBrowsingCategory = null;
 
-// ============================================
-// NEW: Cache management
-// ============================================
-const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
-const AUTO_REFRESH_INTERVAL = 60 * 1000; // 60 seconds
+// Cache management
+const CACHE_DURATION = 24 * 60 * 60 * 1000;
+const AUTO_REFRESH_INTERVAL = 60 * 1000;
 let autoRefreshTimer = null;
 
 // ============================================
-// NEW: Cache Helper Functions
+// LOCATION TRACKING
+// ============================================
+
+let lastKnownLocation = null;
+
+async function getCurrentLocation() {
+    return new Promise((resolve) => {
+        if (!navigator.geolocation) {
+            console.warn('Geolocation not supported');
+            resolve(null);
+            return;
+        }
+
+        // Return cached location if recent (within 5 minutes)
+        if (lastKnownLocation && (Date.now() - lastKnownLocation.timestamp < 5 * 60 * 1000)) {
+            resolve(lastKnownLocation);
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            async (position) => {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                
+                // Reverse geocode to get address
+                const address = await reverseGeocode(lat, lon);
+                
+                lastKnownLocation = {
+                    latitude: lat,
+                    longitude: lon,
+                    accuracy: position.coords.accuracy,
+                    timestamp: Date.now(),
+                    address: address,
+                    lat: lat.toFixed(6),
+                    lon: lon.toFixed(6)
+                };
+                resolve(lastKnownLocation);
+            },
+            (error) => {
+                console.warn('Location error:', error.message);
+                resolve(lastKnownLocation);
+            },
+            {
+                enableHighAccuracy: false,
+                timeout: 5000,
+                maximumAge: 300000
+            }
+        );
+    });
+}
+
+async function reverseGeocode(lat, lon) {
+    try {
+        // Using Nominatim (OpenStreetMap) for free reverse geocoding
+        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`, {
+            headers: {
+                'User-Agent': 'HVAC-Inventory-App'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Geocoding failed');
+        }
+        
+        const data = await response.json();
+        
+        if (data && data.display_name) {
+            return data.display_name;
+        }
+        
+        // Fallback to simple coordinates
+        return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+    } catch (error) {
+        console.warn('Reverse geocoding error:', error);
+        return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+    }
+}
+
+async function requestLocationPermission() {
+    try {
+        await getCurrentLocation();
+    } catch (error) {
+        console.warn('Location permission not granted');
+    }
+}
+
+// ============================================
+// Cache Helper Functions
 // ============================================
 
 function getCachedData(key) {
@@ -66,7 +152,6 @@ function getCachedData(key) {
         const data = JSON.parse(cached);
         const now = Date.now();
         
-        // Check if expired
         if (now - data.timestamp > CACHE_DURATION) {
             localStorage.removeItem(key);
             return null;
@@ -101,12 +186,10 @@ function clearCache() {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize ZXing
     if (typeof ZXing !== 'undefined') {
         codeReader = new ZXing.BrowserMultiFormatReader();
     }
     
-    // Auto-focus PIN input on desktop
     const pinInput = document.getElementById('pinInput');
     if (pinInput) {
         setTimeout(() => {
@@ -120,7 +203,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Login handlers
     document.getElementById('loginBtn').addEventListener('click', login);
     document.getElementById('logoutBtn').addEventListener('click', logout);
     document.getElementById('refreshBtn').addEventListener('click', refreshData);
@@ -136,14 +218,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // NEW: Auto-refresh on app resume
     document.addEventListener('visibilitychange', function() {
         if (!document.hidden && currentUser) {
             refreshQuantitiesOnly();
         }
     });
     
-    // Listen for physical barcode scanner input
     let barcodeBuffer = '';
     let barcodeTimeout = null;
     
@@ -175,7 +255,6 @@ document.addEventListener('DOMContentLoaded', function() {
 async function login() {
     const pin = document.getElementById('pinInput').value;
     
-    // Check lockout
     if (lockoutUntil && Date.now() < lockoutUntil) {
         const remainingSeconds = Math.ceil((lockoutUntil - Date.now()) / 1000);
         const minutes = Math.floor(remainingSeconds / 60);
@@ -226,6 +305,9 @@ async function login() {
                 userTruck = user.truck;
                 canEditPIN = user.canEditPIN;
                 
+                // Request location permission
+                await requestLocationPermission();
+                
                 await logLoginHistory(user.name, pin, 'Login', 'User logged in');
                 
                 document.getElementById('loginScreen').style.display = 'none';
@@ -269,7 +351,6 @@ async function login() {
 
 function logout() {
     if (confirm('Logout?')) {
-        // NEW: Stop auto-refresh timer
         if (autoRefreshTimer) {
             clearInterval(autoRefreshTimer);
             autoRefreshTimer = null;
@@ -280,6 +361,7 @@ function logout() {
         isOwner = false;
         userTruck = null;
         canEditPIN = false;
+        lastKnownLocation = null;
         document.getElementById('pinInput').value = '';
         document.getElementById('loginScreen').style.display = 'flex';
         document.getElementById('appContainer').style.display = 'none';
@@ -291,29 +373,22 @@ function logout() {
 }
 
 // ============================================
-// NEW: Optimized init with parallel loading and caching
+// Optimized init with parallel loading and caching
 // ============================================
 
 async function init() {
     showProcessing(true);
     
     try {
-        // STEP 1: Load static data (parallel + cached)
         await loadStaticData();
-        
-        // STEP 2: Load quantities only
         await loadInventoryQuantities();
-        
-        // STEP 3: Load history
         await loadHistory();
         
-        // STEP 4: Build UI
         buildTabs();
         setupEventListeners();
         populateDropdowns();
         updateDashboard();
         
-        // NEW: Start auto-refresh timer
         startAutoRefresh();
         
         showProcessing(false);
@@ -325,16 +400,14 @@ async function init() {
 }
 
 // ============================================
-// NEW: Load static data with caching and parallel requests
+// Load static data with caching and parallel requests
 // ============================================
 
 async function loadStaticData() {
-    // Try to load from cache first
     const cachedSettings = getCachedData('cache_settings');
     const cachedCategories = getCachedData('cache_categories');
     const cachedTrucks = getCachedData('cache_trucks');
     
-    // If all cached, use cache (FAST!)
     if (cachedSettings && cachedCategories && cachedTrucks) {
         settings = cachedSettings;
         categories = cachedCategories;
@@ -342,7 +415,6 @@ async function loadStaticData() {
         return;
     }
     
-    // Otherwise, fetch fresh in PARALLEL (faster than sequential)
     const [settingsRes, categoriesRes, trucksRes] = await Promise.all([
         fetch(SCRIPT_URL + '?action=readSettings'),
         fetch(SCRIPT_URL + '?action=readCategories'),
@@ -355,7 +427,6 @@ async function loadStaticData() {
         trucksRes.json()
     ]);
     
-    // Process settings
     if (settingsData.success && settingsData.data) {
         settings = {};
         for (let i = 1; i < settingsData.data.length; i++) {
@@ -370,7 +441,6 @@ async function loadStaticData() {
         setCachedData('cache_settings', settings);
     }
     
-    // Process categories
     if (categoriesData.success && categoriesData.data) {
         categories = {};
         for (let i = 1; i < categoriesData.data.length; i++) {
@@ -386,7 +456,6 @@ async function loadStaticData() {
         setCachedData('cache_categories', categories);
     }
     
-    // Process trucks
     if (trucksData.success && trucksData.data) {
         trucks = {};
         for (let i = 1; i < trucksData.data.length; i++) {
@@ -401,10 +470,6 @@ async function loadStaticData() {
         setCachedData('cache_trucks', trucks);
     }
 }
-
-// ============================================
-// NEW: Load inventory quantities (caches part details separately)
-// ============================================
 
 async function loadInventoryQuantities() {
     const response = await fetch(SCRIPT_URL + '?action=readInventory');
@@ -421,7 +486,6 @@ async function loadInventoryQuantities() {
             if (row[0]) {
                 const partId = row[0];
                 
-                // Use cached details if available, otherwise create new
                 const item = cachedPartDetails[partId] || {
                     id: partId,
                     name: row[1] || '',
@@ -430,7 +494,6 @@ async function loadInventoryQuantities() {
                     imageUrl: row[4] || ''
                 };
                 
-                // Always update quantities (fresh data)
                 item.shop = parseInt(row[5]) || 0;
                 
                 Object.keys(trucks).forEach(truckId => {
@@ -464,7 +527,6 @@ async function loadInventoryQuantities() {
             }
         }
         
-        // Cache part details (WITHOUT quantities for smaller cache size)
         const partDetailsToCache = {};
         Object.keys(inventory).forEach(partId => {
             const part = inventory[partId];
@@ -480,45 +542,29 @@ async function loadInventoryQuantities() {
     }
 }
 
-// ============================================
-// NEW: Silent background refresh (quantities only)
-// ============================================
-
-// ============================================
-// NEW: Silent background refresh (quantities only) - IMPROVED
-// ============================================
-
-// ============================================
-// NEW: Silent background refresh with rate limit protection
-// ============================================
-
 let consecutiveRefreshErrors = 0;
 const MAX_ERRORS_BEFORE_PAUSE = 3;
 
 async function refreshQuantitiesOnly() {
     try {
-        // If too many errors, pause auto-refresh
         if (consecutiveRefreshErrors >= MAX_ERRORS_BEFORE_PAUSE) {
             console.warn('⚠️ Too many refresh errors. Pausing auto-refresh for 5 minutes.');
             
-            // Stop the current timer
             if (autoRefreshTimer) {
                 clearInterval(autoRefreshTimer);
             }
             
-            // Restart after 5 minutes
             setTimeout(() => {
                 console.log('🔄 Resuming auto-refresh');
                 consecutiveRefreshErrors = 0;
                 startAutoRefresh();
-            }, 5 * 60 * 1000); // 5 minutes
+            }, 5 * 60 * 1000);
             
             return;
         }
         
         const response = await fetch(SCRIPT_URL + '?action=readInventory');
         
-        // Check for rate limit
         if (response.status === 429) {
             consecutiveRefreshErrors++;
             console.error('⚠️ Rate limited. Pausing refresh.');
@@ -530,7 +576,6 @@ async function refreshQuantitiesOnly() {
         if (result.success && result.data && result.data.length > 1) {
             const headers = result.data[0];
             
-            // Update quantities in existing inventory object
             for (let i = 1; i < result.data.length; i++) {
                 const row = result.data[i];
                 const partId = row[0];
@@ -559,11 +604,9 @@ async function refreshQuantitiesOnly() {
                 }
             }
             
-            // Reset error counter on success
             consecutiveRefreshErrors = 0;
         }
         
-        // Smart update: Only refresh what's visible
         const activeTab = document.querySelector('.content.active');
         if (activeTab) {
             const tabId = activeTab.id;
@@ -582,19 +625,14 @@ async function refreshQuantitiesOnly() {
         console.error('Background refresh error:', error);
     }
 }
-// ============================================
-// NEW: Smart Dashboard Update (no image reload)
-// ============================================
 
 function updateDashboardQuantitiesOnly() {
     const container = document.getElementById('lowStockContainer');
     if (!container) return;
     
-    // Update existing items instead of rebuilding
     const items = container.querySelectorAll('.low-stock-item');
     
     items.forEach(item => {
-        // Extract part ID from the onclick handler or data attribute
         const onclickStr = item.getAttribute('onclick');
         if (onclickStr) {
             const match = onclickStr.match(/openPartDetail\('([^']+)'\)/);
@@ -603,22 +641,14 @@ function updateDashboardQuantitiesOnly() {
                 const part = inventory[partId];
                 
                 if (part) {
-                    // Find and update the text content (skip the image)
-                    const textNodes = Array.from(item.childNodes).filter(node => 
-                        node.nodeType === Node.TEXT_NODE || node.nodeName === 'STRONG' || node.nodeName === 'SMALL' || node.nodeName === 'BR'
-                    );
-                    
-                    // Just rebuild the text, keep the image
                     const img = item.querySelector('img');
                     const imgHTML = img ? img.outerHTML : '';
                     
-                    // Determine which truck this is for
                     let truckId = userTruck;
                     const section = item.closest('.low-stock-section');
                     if (section) {
                         const heading = section.querySelector('h3');
                         if (heading) {
-                            // Extract truck ID from heading
                             Object.keys(trucks).forEach(id => {
                                 if (heading.textContent.includes(trucks[id].name)) {
                                     truckId = id;
@@ -639,7 +669,6 @@ function updateDashboardQuantitiesOnly() {
                         needed = minQty - currentQty;
                     }
                     
-                    // Update with new quantities
                     item.innerHTML = `
                         ${imgHTML}
                         <strong>${part.name}</strong><br>
@@ -652,26 +681,18 @@ function updateDashboardQuantitiesOnly() {
         }
     });
     
-    // Check if we need to rebuild (items added/removed from low stock)
-    // Only rebuild if the structure changed
     const currentLowStockCount = container.querySelectorAll('.low-stock-item').length;
     const actualLowStockCount = getLowStockCount();
     
     if (currentLowStockCount !== actualLowStockCount) {
-        // Structure changed, do full rebuild
         updateDashboard();
     }
 }
-
-// ============================================
-// NEW: Smart Parts Grid Update (no image reload)
-// ============================================
 
 function updatePartsGridQuantitiesOnly() {
     const grid = document.getElementById('allPartsGrid');
     if (!grid || grid.style.display === 'none') return;
     
-    // Update stock badges only
     const cards = grid.querySelectorAll('.part-card');
     
     cards.forEach(card => {
@@ -683,7 +704,6 @@ function updatePartsGridQuantitiesOnly() {
                 const part = inventory[partId];
                 
                 if (part) {
-                    // Find and update only the stock badge
                     const stockBadge = card.querySelector('.stock-badge');
                     if (stockBadge) {
                         let shopStatus = 'stock-ok';
@@ -699,15 +719,10 @@ function updatePartsGridQuantitiesOnly() {
     });
 }
 
-// ============================================
-// NEW: Helper to count low stock items
-// ============================================
-
 function getLowStockCount() {
     const activeSeasons = settings.ActiveSeasons ? settings.ActiveSeasons.split(',') : ['heating', 'cooling', 'year-round'];
     let count = 0;
     
-    // Count user's truck low stock
     if (userTruck && trucks[userTruck]) {
         count += Object.keys(inventory).filter(id => {
             const part = inventory[id];
@@ -716,7 +731,6 @@ function getLowStockCount() {
         }).length;
     }
     
-    // Count other trucks
     Object.keys(trucks).filter(id => trucks[id].active && id !== userTruck).forEach(truckId => {
         count += Object.keys(inventory).filter(id => {
             const part = inventory[id];
@@ -725,7 +739,6 @@ function getLowStockCount() {
         }).length;
     });
     
-    // Count shop
     count += Object.keys(inventory).filter(id => {
         const part = inventory[id];
         return part.shop < part.minStock && activeSeasons.includes(part.season);
@@ -733,10 +746,6 @@ function getLowStockCount() {
     
     return count;
 }
-
-// ============================================
-// NEW: Start auto-refresh timer (every 3 minutes)
-// ============================================
 
 function startAutoRefresh() {
     if (autoRefreshTimer) {
@@ -748,18 +757,12 @@ function startAutoRefresh() {
     }, AUTO_REFRESH_INTERVAL);
 }
 
-// ============================================
-// MODIFIED: refreshData - now clears cache and reloads everything
-// ============================================
-
 async function refreshData() {
     showProcessing(true);
     
     try {
-        // Clear cache to force fresh data
         clearCache();
         
-        // Reload everything (parallel where possible)
         await loadStaticData();
         await loadInventoryQuantities();
         await loadHistory();
@@ -785,11 +788,6 @@ async function refreshData() {
         showToast('Error refreshing data', 'error');
     }
 }
-
-// ============================================
-// MODIFIED: Individual load functions now use cache
-// (kept for backward compatibility with rest of code)
-// ============================================
 
 async function loadSettings() {
     const cached = getCachedData('cache_settings');
@@ -874,7 +872,6 @@ async function loadTrucks() {
 }
 
 async function loadInventory() {
-    // Just call the new optimized version
     await loadInventoryQuantities();
 }
 
@@ -894,7 +891,10 @@ async function loadHistory() {
                 quantity: row[4],
                 from: row[5],
                 to: row[6],
-                jobName: row[7]
+                jobName: row[7],
+                address: row[8] || '',
+                lat: row[9] || '',
+                lon: row[10] || ''
             });
         }
         history.reverse();
@@ -903,6 +903,8 @@ async function loadHistory() {
 
 async function logLoginHistory(userName, pin, action, details) {
     try {
+        const location = await getCurrentLocation();
+        
         await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
@@ -911,7 +913,10 @@ async function logLoginHistory(userName, pin, action, details) {
                 userName: userName,
                 pin: pin,
                 loginAction: action,
-                details: details
+                details: details,
+                address: location ? location.address : '',
+                lat: location ? location.lat : '',
+                lon: location ? location.lon : ''
             })
         });
     } catch (error) {
@@ -965,7 +970,6 @@ function switchTab(tabName) {
     if (content) {
         content.classList.add('active');
         
-        // Load tab-specific data
         if (tabName === 'dashboard') updateDashboard();
         if (tabName === 'all-parts') renderAllParts();
         if (tabName === 'quick-load') updateQuickLoadList();
@@ -991,7 +995,6 @@ function getTabLabel(tabId) {
 }
 
 function setupEventListeners() {
-    // Search
     document.getElementById('searchAllParts')?.addEventListener('input', function(e) {
         renderAllParts(e.target.value);
     });
@@ -1000,58 +1003,50 @@ function setupEventListeners() {
         filterPartModal(e.target.value);
     });
     
-// Filter buttons
-document.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.addEventListener('click', function() {
-        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-        this.classList.add('active');
-        
-        const filter = this.getAttribute('data-filter');
-        currentViewMode = filter;
-        currentBrowsingCategory = null; // Reset when switching modes
-        
-        // Clear search when switching to browse
-        if (filter === 'browse') {
-            document.getElementById('searchAllParts').value = '';
-        }
-        
-        renderAllParts();
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            
+            const filter = this.getAttribute('data-filter');
+            currentViewMode = filter;
+            currentBrowsingCategory = null;
+            
+            if (filter === 'browse') {
+                document.getElementById('searchAllParts').value = '';
+            }
+            
+            renderAllParts();
+        });
     });
-});
     
     document.getElementById('categoryFilter')?.addEventListener('change', function(e) {
         currentCategoryFilter = e.target.value;
         renderAllParts();
     });
     
-    // Quick Actions
     document.getElementById('loadTruckBtn')?.addEventListener('click', loadTruck);
     document.getElementById('usePartsBtn')?.addEventListener('click', useParts);
     document.getElementById('returnBtn')?.addEventListener('click', returnToShop);
     document.getElementById('transferBtn')?.addEventListener('click', transferParts);
     
-    // Receive Stock
     document.getElementById('receiveStockBtn')?.addEventListener('click', receiveStock);
     
-    // Add Part
     document.getElementById('addPartBtn')?.addEventListener('click', addPart);
     document.getElementById('uploadImageBtn')?.addEventListener('click', () => {
         document.getElementById('partImageFile').click();
     });
     document.getElementById('partImageFile')?.addEventListener('change', handleImageUpload);
     
-    // Quick Load
     document.getElementById('quickLoadBtn')?.addEventListener('click', processQuickLoad);
     document.getElementById('quickLoadLocation')?.addEventListener('change', updateQuickLoadList);
     
-    // Settings
     document.getElementById('saveSeasonsBtn')?.addEventListener('click', saveActiveSeasons);
     document.getElementById('changePinBtn')?.addEventListener('click', changePIN);
     document.getElementById('addCategoryBtn')?.addEventListener('click', addCategory);
     document.getElementById('addTruckBtn')?.addEventListener('click', addTruck);
     document.getElementById('addUserBtn')?.addEventListener('click', addUser);
     
-    // Part selection buttons
     document.querySelectorAll('.part-select-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             const context = this.getAttribute('data-context');
@@ -1059,7 +1054,6 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
         });
     });
     
-    // Barcode scan buttons
     document.querySelectorAll('.barcode-scan-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             const target = this.getAttribute('data-target');
@@ -1067,14 +1061,12 @@ document.querySelectorAll('.filter-btn').forEach(btn => {
         });
     });
     
-    // Modal close buttons
     document.getElementById('closePartModal')?.addEventListener('click', closePartModal);
     document.getElementById('closePartDetailModal')?.addEventListener('click', closePartDetailModal);
     document.getElementById('closeBarcodeScannerModal')?.addEventListener('click', stopCameraBarcodeScanner);
 }
 
 function populateDropdowns() {
-    // Categories
     const categorySelect = document.getElementById('partCategory');
     if (categorySelect) {
         categorySelect.innerHTML = '<option value="">-- Select --</option>';
@@ -1088,12 +1080,10 @@ function populateDropdowns() {
         });
     }
     
-    // Category filter
     const categoryFilter = document.getElementById('categoryFilter');
     if (categoryFilter) {
         categoryFilter.innerHTML = '<option value="">All Categories</option>';
         
-        // Get root categories
         Object.keys(categories).filter(id => !categories[id].parent).sort((a, b) => {
             return categories[a].name.localeCompare(categories[b].name);
         }).forEach(id => {
@@ -1102,7 +1092,6 @@ function populateDropdowns() {
             opt.textContent = categories[id].name;
             categoryFilter.appendChild(opt);
             
-            // Add children
             Object.keys(categories).filter(childId => categories[childId].parent === id).forEach(childId => {
                 const childOpt = document.createElement('option');
                 childOpt.value = childId;
@@ -1112,7 +1101,6 @@ function populateDropdowns() {
         });
     }
     
-    // Parent category for adding
     const newCategoryParent = document.getElementById('newCategoryParent');
     if (newCategoryParent) {
         newCategoryParent.innerHTML = '<option value="">Top Level</option>';
@@ -1126,7 +1114,6 @@ function populateDropdowns() {
         });
     }
     
-    // Trucks
     const truckSelects = ['loadTruck', 'useTruck', 'returnTruck', 'newUserTruck', 'scanTruck', 'transferFromTruck', 'transferToTruck'];
     truckSelects.forEach(selectId => {
         const select = document.getElementById(selectId);
@@ -1144,7 +1131,6 @@ function populateDropdowns() {
         }
     });
     
-    // Quick Load location
     const quickLoadLocation = document.getElementById('quickLoadLocation');
     if (quickLoadLocation) {
         while (quickLoadLocation.options.length > 2) {
@@ -1158,7 +1144,6 @@ function populateDropdowns() {
         });
     }
     
-    // Truck minimums in Add Part
     renderTruckMinimumsInputs();
 }
 
@@ -1179,7 +1164,683 @@ function renderTruckMinimumsInputs() {
 }
 
 // ============================================
-// DASHBOARD - LOW STOCK (USER'S TRUCK FIRST)
+// QUICK ACTIONS WITH LOCATION TRACKING
+// ============================================
+
+async function useParts() {
+    const truck = document.getElementById('useTruck').value;
+    const partId = selectedParts.use;
+    const qty = parseInt(document.getElementById('useQty').value);
+    const jobName = document.getElementById('jobName').value.trim() || 'Job';
+    
+    if (!partId) {
+        showToast('Select a part', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    const location = await getCurrentLocation();
+    
+    await loadInventory();
+    
+    const part = inventory[partId];
+    if (part[truck] < qty) {
+        showProcessing(false);
+        showToast(`Only ${part[truck]} available on truck`, 'error');
+        return;
+    }
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    [truck]: part[truck] - qty
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Used on Job',
+            details: `${part.name}: ${qty} used from ${trucks[truck].name}`,
+            quantity: qty,
+            from: trucks[truck].name,
+            to: 'Customer',
+            jobName: jobName,
+            address: location ? location.address : '',
+            lat: location ? location.lat : '',
+            lon: location ? location.lon : ''
+        });
+        
+        await loadInventory();
+        document.getElementById('useQty').value = '1';
+        document.getElementById('jobName').value = '';
+        clearSelectedPart('use');
+        updateDashboard();
+        showProcessing(false);
+        showToast('Usage recorded!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error recording usage', 'error');
+    }
+}
+
+async function loadTruck() {
+    const partId = selectedParts.load;
+    const qty = parseInt(document.getElementById('loadQty').value);
+    const truck = document.getElementById('loadTruck').value;
+    
+    if (!partId) {
+        showToast('Select a part', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    const location = await getCurrentLocation();
+    
+    await loadInventory();
+    
+    const part = inventory[partId];
+    if (part.shop < qty) {
+        showProcessing(false);
+        showToast(`Only ${part.shop} available in shop`, 'error');
+        return;
+    }
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    shop: part.shop - qty,
+                    [truck]: part[truck] + qty
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Loaded Truck',
+            details: `${part.name}: ${qty} loaded onto ${trucks[truck].name}`,
+            quantity: qty,
+            from: 'Shop',
+            to: trucks[truck].name,
+            address: location ? location.address : '',
+            lat: location ? location.lat : '',
+            lon: location ? location.lon : ''
+        });
+        
+        await loadInventory();
+        document.getElementById('loadQty').value = '1';
+        clearSelectedPart('load');
+        updateDashboard();
+        showProcessing(false);
+        showToast('Truck loaded!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error loading truck', 'error');
+    }
+}
+
+async function returnToShop() {
+    const truck = document.getElementById('returnTruck').value;
+    const partId = selectedParts.return;
+    const qty = parseInt(document.getElementById('returnQty').value);
+    
+    if (!partId) {
+        showToast('Select a part', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    const location = await getCurrentLocation();
+    
+    await loadInventory();
+    
+    const part = inventory[partId];
+    if (part[truck] < qty) {
+        showProcessing(false);
+        showToast(`Only ${part[truck]} available on truck`, 'error');
+        return;
+    }
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    [truck]: part[truck] - qty,
+                    shop: part.shop + qty
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Returned to Shop',
+            details: `${part.name}: ${qty} returned from ${trucks[truck].name}`,
+            quantity: qty,
+            from: trucks[truck].name,
+            to: 'Shop',
+            address: location ? location.address : '',
+            lat: location ? location.lat : '',
+            lon: location ? location.lon : ''
+        });
+        
+        await loadInventory();
+        document.getElementById('returnQty').value = '1';
+        clearSelectedPart('return');
+        updateDashboard();
+        showProcessing(false);
+        showToast('Returned to shop!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error returning to shop', 'error');
+    }
+}
+
+async function transferParts() {
+    const fromTruck = document.getElementById('transferFromTruck').value;
+    const toTruck = document.getElementById('transferToTruck').value;
+    const partId = selectedParts.transfer;
+    const qty = parseInt(document.getElementById('transferQty').value);
+    
+    if (!partId) {
+        showToast('Select a part', 'error');
+        return;
+    }
+    
+    if (fromTruck === toTruck) {
+        showToast('Cannot transfer to same truck', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    const location = await getCurrentLocation();
+    
+    await loadInventory();
+    
+    const part = inventory[partId];
+    if (part[fromTruck] < qty) {
+        showProcessing(false);
+        showToast(`Only ${part[fromTruck]} available on ${trucks[fromTruck].name}`, 'error');
+        return;
+    }
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    [fromTruck]: part[fromTruck] - qty,
+                    [toTruck]: part[toTruck] + qty
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Transferred',
+            details: `${part.name}: ${qty} from ${trucks[fromTruck].name} to ${trucks[toTruck].name}`,
+            quantity: qty,
+            from: trucks[fromTruck].name,
+            to: trucks[toTruck].name,
+            address: location ? location.address : '',
+            lat: location ? location.lat : '',
+            lon: location ? location.lon : ''
+        });
+        
+        await loadInventory();
+        document.getElementById('transferQty').value = '1';
+        clearSelectedPart('transfer');
+        updateDashboard();
+        showProcessing(false);
+        showToast('Transfer complete!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error transferring', 'error');
+    }
+}
+
+async function receiveStock() {
+    const partId = selectedParts.receive;
+    const qty = parseInt(document.getElementById('receiveQty').value);
+    
+    if (!partId) {
+        showToast('Select a part', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    const location = await getCurrentLocation();
+    
+    await loadInventory();
+    
+    const part = inventory[partId];
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    shop: part.shop + qty
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Received Stock',
+            details: `${part.name}: ${qty} received to shop`,
+            quantity: qty,
+            from: 'Supplier',
+            to: 'Shop',
+            address: location ? location.address : '',
+            lat: location ? location.lat : '',
+            lon: location ? location.lon : ''
+        });
+        
+        await loadInventory();
+        document.getElementById('receiveQty').value = '1';
+        clearSelectedPart('receive');
+        updateDashboard();
+        showProcessing(false);
+        showToast('Stock received!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error receiving stock', 'error');
+    }
+}
+
+// ============================================
+// PART DETAIL MODAL QUICK ACTIONS
+// ============================================
+
+async function quickReceive(partId) {
+    const qty = prompt('Enter quantity to receive:');
+    if (!qty || isNaN(qty) || parseInt(qty) <= 0) return;
+    
+    showProcessing(true);
+    
+    const location = await getCurrentLocation();
+    
+    await loadInventory();
+    const part = inventory[partId];
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    shop: part.shop + parseInt(qty)
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Received Stock',
+            details: `${part.name}: ${qty} added to shop`,
+            quantity: parseInt(qty),
+            from: 'Supplier',
+            to: 'Shop',
+            address: location ? location.address : '',
+            lat: location ? location.lat : '',
+            lon: location ? location.lon : ''
+        });
+        
+        await loadInventory();
+        updateDashboard();
+        closePartDetailModal();
+        showProcessing(false);
+        showToast('Stock received!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error receiving stock', 'error');
+    }
+}
+
+async function quickLoadToTruck(partId, truckId) {
+    const qty = prompt(`Enter quantity to load onto ${trucks[truckId].name}:`);
+    if (!qty || isNaN(qty) || parseInt(qty) <= 0) return;
+    
+    showProcessing(true);
+    
+    const location = await getCurrentLocation();
+    
+    await loadInventory();
+    const part = inventory[partId];
+    
+    if (part.shop < parseInt(qty)) {
+        showProcessing(false);
+        showToast(`Only ${part.shop} available in shop`, 'error');
+        return;
+    }
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    shop: part.shop - parseInt(qty),
+                    [truckId]: part[truckId] + parseInt(qty)
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Loaded Truck',
+            details: `${part.name}: ${qty} loaded onto ${trucks[truckId].name}`,
+            quantity: parseInt(qty),
+            from: 'Shop',
+            to: trucks[truckId].name,
+            address: location ? location.address : '',
+            lat: location ? location.lat : '',
+            lon: location ? location.lon : ''
+        });
+        
+        await loadInventory();
+        updateDashboard();
+        closePartDetailModal();
+        showProcessing(false);
+        showToast('Truck loaded!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error loading truck', 'error');
+    }
+}
+
+async function quickUseOnJob(partId) {
+    const truck = document.getElementById('useJobTruck').value;
+    const qty = parseInt(document.getElementById('useJobQty').value);
+    const jobName = document.getElementById('useJobName').value.trim() || 'Job';
+    
+    if (!qty || qty <= 0) {
+        showToast('Enter a valid quantity', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    const location = await getCurrentLocation();
+    
+    await loadInventory();
+    
+    const part = inventory[partId];
+    if (part[truck] < qty) {
+        showProcessing(false);
+        showToast(`Only ${part[truck]} available on ${trucks[truck].name}`, 'error');
+        return;
+    }
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    [truck]: part[truck] - qty
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Used on Job',
+            details: `${part.name}: ${qty} used from ${trucks[truck].name}`,
+            quantity: qty,
+            from: trucks[truck].name,
+            to: 'Customer',
+            jobName: jobName,
+            address: location ? location.address : '',
+            lat: location ? location.lat : '',
+            lon: location ? location.lon : ''
+        });
+        
+        await loadInventory();
+        updateDashboard();
+        closePartDetailModal();
+        showProcessing(false);
+        showToast(`Used ${qty}x ${part.name} on ${jobName}!`);
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error recording usage', 'error');
+    }
+}
+
+// ============================================
+// TRANSACTION LOGGING
+// ============================================
+
+async function addTransaction(transaction) {
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'addTransaction',
+                transaction: transaction
+            })
+        });
+    } catch (error) {
+        console.error('Transaction log error:', error);
+    }
+}
+
+// ============================================
+// ADD PART WITH LOCATION
+// ============================================
+
+async function addPart() {
+    const partNumber = document.getElementById('partNumber').value.trim();
+    const name = document.getElementById('partName').value.trim();
+    const categoryId = document.getElementById('partCategory').value;
+    const barcode = document.getElementById('partBarcode').value.trim();
+    const imageUrl = document.getElementById('partImageUrl').value.trim() || uploadedImageUrl;
+    const season = document.getElementById('partSeason').value;
+    const shopQty = parseInt(document.getElementById('shopQty').value);
+    const minStock = parseInt(document.getElementById('minStock').value);
+    const price = parseFloat(document.getElementById('partPrice').value) || 0;
+    const link = document.getElementById('partLink').value.trim();
+    
+    if (!partNumber || !name || !categoryId) {
+        showToast('Fill required fields', 'error');
+        return;
+    }
+    
+    if (inventory[partNumber]) {
+        showToast('Part number already exists', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    const location = await getCurrentLocation();
+    
+    const newPart = {
+        partNumber: partNumber,
+        name: name,
+        category: categoryId,
+        barcode: barcode,
+        imageUrl: imageUrl,
+        season: season,
+        shop: shopQty,
+        minStock: minStock,
+        price: price,
+        purchaseLink: link
+    };
+    
+    Object.keys(trucks).forEach(truckId => {
+        newPart[truckId] = 0;
+    });
+    
+    Object.keys(trucks).forEach(truckId => {
+        const minInput = document.getElementById('minTruck_' + truckId);
+        newPart['minTruck_' + truckId] = minInput ? parseInt(minInput.value) || 0 : 0;
+    });
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'addPart',
+                part: newPart
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Added Part',
+            details: `${name} (${categories[categoryId].name})`,
+            quantity: shopQty,
+            from: '',
+            to: 'Shop',
+            address: location ? location.address : '',
+            lat: location ? location.lat : '',
+            lon: location ? location.lon : ''
+        });
+        
+        await loadInventory();
+        
+        document.getElementById('partNumber').value = '';
+        document.getElementById('partName').value = '';
+        document.getElementById('partBarcode').value = '';
+        document.getElementById('partImageUrl').value = '';
+        document.getElementById('shopQty').value = '0';
+        clearImageUpload();
+        
+        populateDropdowns();
+        updateDashboard();
+        showProcessing(false);
+        showToast('Part added!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error adding part', 'error');
+    }
+}
+
+// ============================================
+// HISTORY WITH LOCATION DISPLAY
+// ============================================
+
+function updateHistory() {
+    const list = document.getElementById('historyList');
+    if (!list) return;
+    
+    if (history.length === 0) {
+        list.innerHTML = '<p style="color: #666;">No activity yet</p>';
+        return;
+    }
+    
+    const displayHistory = isOwner ? history : history.filter(e => e.tech === currentUser);
+    
+    list.innerHTML = displayHistory.slice(0, 100).map(e => {
+        let locationHTML = '';
+        if (e.address || e.lat || e.lon) {
+            if (e.address) {
+                locationHTML = `<br><small style="color: #666;">📍 ${e.address}</small>`;
+            } else if (e.lat && e.lon) {
+                locationHTML = `<br><small style="color: #666;">📍 ${e.lat}, ${e.lon}</small>`;
+            }
+        }
+        
+        return `
+            <div class="history-item">
+                <strong>${e.action}</strong> - ${e.details}
+                <span class="tech-badge">${e.tech}</span><br>
+                <small style="color: #666;">📅 ${e.timestamp}${e.jobName ? ` | 👤 ${e.jobName}` : ''}</small>
+                ${locationHTML}
+            </div>
+        `;
+    }).join('');
+}
+
+// ============================================
+// UI HELPERS
+// ============================================
+
+function showProcessing(show) {
+    const overlay = document.getElementById('processingOverlay');
+    if (show) {
+        overlay.classList.add('show');
+    } else {
+        overlay.classList.remove('show');
+    }
+}
+
+function showToast(message, type = 'success') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    
+    setTimeout(() => toast.classList.add('show'), 100);
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => document.body.removeChild(toast), 300);
+    }, 3000);
+}
+
+function clearSelectedPart(context) {
+    selectedParts[context] = null;
+    const display = document.getElementById(context + 'PartDisplay');
+    if (display) {
+        display.innerHTML = '';
+        display.classList.remove('show');
+    }
+}
+
+// ============================================
+// DASHBOARD - LOW STOCK
 // ============================================
 
 function updateDashboard() {
@@ -1188,10 +1849,8 @@ function updateDashboard() {
     
     container.innerHTML = '';
     
-    // Get active seasons
     const activeSeasons = settings.ActiveSeasons ? settings.ActiveSeasons.split(',') : ['heating', 'cooling', 'year-round'];
     
-    // User's truck FIRST (if applicable)
     if (userTruck && trucks[userTruck]) {
         const truckLow = Object.keys(inventory).filter(id => {
             const part = inventory[id];
@@ -1213,18 +1872,18 @@ function updateDashboard() {
                 const item = document.createElement('div');
                 item.className = 'low-stock-item' + (part[userTruck] === 0 ? ' critical' : '');
                 
-               let imageHTML = '';
-if (part.imageUrl && part.imageUrl.trim() !== '') {
-    let imageUrl = part.imageUrl;
-    if (imageUrl.includes('drive.google.com')) {
-        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
-        if (fileIdMatch) {
-            const fileId = fileIdMatch[1] || fileIdMatch[2];
-            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w300`;
-        }
-    }
-    imageHTML = `<img src="${imageUrl}" alt="${part.name}" loading="lazy">`;
-}
+                let imageHTML = '';
+                if (part.imageUrl && part.imageUrl.trim() !== '') {
+                    let imageUrl = part.imageUrl;
+                    if (imageUrl.includes('drive.google.com')) {
+                        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+                        if (fileIdMatch) {
+                            const fileId = fileIdMatch[1] || fileIdMatch[2];
+                            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w300`;
+                        }
+                    }
+                    imageHTML = `<img src="${imageUrl}" alt="${part.name}" loading="lazy">`;
+                }
                 
                 item.innerHTML = `
                     ${imageHTML}
@@ -1241,7 +1900,6 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
         }
     }
     
-    // Other trucks
     Object.keys(trucks).filter(id => trucks[id].active && id !== userTruck).forEach(truckId => {
         const truckLow = Object.keys(inventory).filter(id => {
             const part = inventory[id];
@@ -1264,17 +1922,17 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
                 item.className = 'low-stock-item' + (part[truckId] === 0 ? ' critical' : '');
                 
                 let imageHTML = '';
-if (part.imageUrl && part.imageUrl.trim() !== '') {
-    let imageUrl = part.imageUrl;
-    if (imageUrl.includes('drive.google.com')) {
-        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
-        if (fileIdMatch) {
-            const fileId = fileIdMatch[1] || fileIdMatch[2];
-            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w300`;
-        }
-    }
-    imageHTML = `<img src="${imageUrl}" alt="${part.name}" loading="lazy">`;
-}
+                if (part.imageUrl && part.imageUrl.trim() !== '') {
+                    let imageUrl = part.imageUrl;
+                    if (imageUrl.includes('drive.google.com')) {
+                        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+                        if (fileIdMatch) {
+                            const fileId = fileIdMatch[1] || fileIdMatch[2];
+                            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w300`;
+                        }
+                    }
+                    imageHTML = `<img src="${imageUrl}" alt="${part.name}" loading="lazy">`;
+                }
                 
                 item.innerHTML = `
                     ${imageHTML}
@@ -1291,7 +1949,6 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
         }
     });
     
-    // Shop low stock
     const shopLow = Object.keys(inventory).filter(id => {
         const part = inventory[id];
         return part.shop < part.minStock && activeSeasons.includes(part.season);
@@ -1311,17 +1968,17 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
             item.className = 'low-stock-item' + (part.shop === 0 ? ' critical' : '');
             
             let imageHTML = '';
-if (part.imageUrl && part.imageUrl.trim() !== '') {
-    let imageUrl = part.imageUrl;
-    if (imageUrl.includes('drive.google.com')) {
-        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
-        if (fileIdMatch) {
-            const fileId = fileIdMatch[1] || fileIdMatch[2];
-            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w300`;
-        }
-    }
-    imageHTML = `<img src="${imageUrl}" alt="${part.name}" loading="lazy">`;
-}
+            if (part.imageUrl && part.imageUrl.trim() !== '') {
+                let imageUrl = part.imageUrl;
+                if (imageUrl.includes('drive.google.com')) {
+                    const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+                    if (fileIdMatch) {
+                        const fileId = fileIdMatch[1] || fileIdMatch[2];
+                        imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w300`;
+                    }
+                }
+                imageHTML = `<img src="${imageUrl}" alt="${part.name}" loading="lazy">`;
+            }
             
             item.innerHTML = `
                 ${imageHTML}
@@ -1346,8 +2003,6 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
 // ALL PARTS VIEW WITH CATEGORIES
 // ============================================
 
-
-
 function renderAllParts(searchTerm = '') {
     const grid = document.getElementById('allPartsGrid');
     const browser = document.getElementById('categoryBrowser');
@@ -1357,18 +2012,14 @@ function renderAllParts(searchTerm = '') {
     
     grid.innerHTML = '';
     
-    // If in browse mode and not searching
     if (currentViewMode === 'browse' && !searchTerm) {
         browser.style.display = 'block';
         
-        // Show breadcrumb
         updateBreadcrumb();
         
-        // If no category selected, show root categories
         if (!currentBrowsingCategory) {
             navGrid.innerHTML = '';
             
-            // Get root categories
             const rootCategories = Object.keys(categories)
                 .filter(id => !categories[id].parent)
                 .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
@@ -1378,28 +2029,22 @@ function renderAllParts(searchTerm = '') {
                 navGrid.appendChild(card);
             });
             
-            // Don't show parts grid when browsing categories
             grid.style.display = 'none';
             return;
         } else {
-            // Show subcategories + parts for selected category
             navGrid.innerHTML = '';
             
-           // Get subcategories
-const subcategories = Object.keys(categories)
-    .filter(id => {
-        return categories[id].parent === currentBrowsingCategory;
-    })
-    .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
+            const subcategories = Object.keys(categories)
+                .filter(id => categories[id].parent === currentBrowsingCategory)
+                .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
             
             subcategories.forEach(catId => {
                 const card = createCategoryCard(catId);
                 navGrid.appendChild(card);
             });
             
-            // Show parts in this EXACT category only (not subcategories)
-grid.style.display = 'grid';
-let parts = getPartsInExactCategory(currentBrowsingCategory);
+            grid.style.display = 'grid';
+            let parts = getPartsInExactCategory(currentBrowsingCategory);
             
             if (parts.length === 0) {
                 grid.innerHTML = '<p style="text-align: center; color: #666; padding: 40px; grid-column: 1 / -1;">No parts in this category</p>';
@@ -1410,15 +2055,12 @@ let parts = getPartsInExactCategory(currentBrowsingCategory);
             return;
         }
     } else {
-        // Hide category browser when showing all or searching
         browser.style.display = 'none';
         grid.style.display = 'grid';
     }
     
-    // Show all parts (with optional search)
     let parts = Object.keys(inventory);
     
-    // Filter by search
     if (searchTerm && searchTerm.trim() !== '') {
         const search = searchTerm.toLowerCase().trim();
         parts = parts.filter(id => {
@@ -1453,9 +2095,8 @@ function createCategoryCard(catId) {
         return categories[id].parent === catId;
     }).length;
     
-    // Handle category image
     let imageHTML = '';
-    let showIcon = true;  // Only show icon if no image
+    let showIcon = true;
     
     if (cat.imageUrl && typeof cat.imageUrl === 'string' && cat.imageUrl.trim() !== '') {
         let imageUrl = cat.imageUrl;
@@ -1467,7 +2108,7 @@ function createCategoryCard(catId) {
             }
         }
         imageHTML = `<img src="${imageUrl}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 8px 8px 0 0; margin-bottom: 10px;" loading="lazy">`;
-        showIcon = false;  // Don't show icon when we have an image
+        showIcon = false;
     }
     
     const icon = subcatCount > 0 ? '📂' : '📦';
@@ -1486,27 +2127,8 @@ function createCategoryCard(catId) {
     
     return card;
 }
-function getPartsInCategory(categoryId) {
-    const categoryIds = [categoryId];
-    
-   const addSubcategories = (parentId) => {
-    Object.keys(categories).forEach(id => {
-        if (categories[id].parent === parentId && !categoryIds.includes(id)) {
-            categoryIds.push(id);
-            addSubcategories(id);
-        }
-    });
-};
-    
-    addSubcategories(categoryId);
-    
-    return Object.keys(inventory).filter(partId => {
-        return categoryIds.includes(inventory[partId].category);
-    });
-}
 
 function getPartsInExactCategory(categoryId) {
-    // Get parts ONLY in this exact category (no subcategories)
     return Object.keys(inventory).filter(partId => {
         return inventory[partId].category === categoryId;
     });
@@ -1524,18 +2146,16 @@ function updateBreadcrumb() {
     const trail = [];
     let currentId = currentBrowsingCategory;
     
-while (currentId) {
-    trail.unshift({ id: currentId, name: categories[currentId].name });
-    currentId = categories[currentId].parent;
-}
+    while (currentId) {
+        trail.unshift({ id: currentId, name: categories[currentId].name });
+        currentId = categories[currentId].parent;
+    }
     
     breadcrumb.innerHTML = `
         <a class="breadcrumb-link" onclick="currentBrowsingCategory = null; renderAllParts();">📁 All Categories</a>
         ${trail.map(item => ` > <a class="breadcrumb-link" onclick="currentBrowsingCategory = '${item.id}'; renderAllParts();">${item.name}</a>`).join('')}
     `;
 }
-
-
 
 function createPartCard(partId) {
     const part = inventory[partId];
@@ -1544,10 +2164,8 @@ function createPartCard(partId) {
     
     let imageHTML = '';
     if (part.imageUrl && part.imageUrl.trim() !== '') {
-        // For Google Drive links, ensure proper format
         let imageUrl = part.imageUrl;
         if (imageUrl.includes('drive.google.com')) {
-            // Extract file ID and use proper Google Drive image URL
             const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
             if (fileIdMatch) {
                 const fileId = fileIdMatch[1] || fileIdMatch[2];
@@ -1579,6 +2197,7 @@ function createPartCard(partId) {
     card.onclick = () => openPartDetail(partId);
     return card;
 }
+
 // ============================================
 // PART SELECTION MODAL
 // ============================================
@@ -1587,7 +2206,7 @@ let currentPartModalContext = null;
 
 function openPartModal(context) {
     currentPartModalContext = context;
-    currentBrowsingCategory = null; // Reset to root
+    currentBrowsingCategory = null;
     const modal = document.getElementById('partModal');
     modal.classList.add('show');
     
@@ -1606,7 +2225,6 @@ function renderPartModalList(filter = '') {
     
     let parts = Object.keys(inventory);
     
-    // Filter based on context
     if (currentPartModalContext === 'use' || currentPartModalContext === 'return') {
         const truckSelect = currentPartModalContext === 'use' ? 'useTruck' : 'returnTruck';
         const truck = document.getElementById(truckSelect).value;
@@ -1620,7 +2238,6 @@ function renderPartModalList(filter = '') {
         }
     }
     
-    // If searching, show filtered parts
     if (filter && filter.trim() !== '') {
         const search = filter.toLowerCase().trim();
         parts = parts.filter(id => {
@@ -1630,7 +2247,6 @@ function renderPartModalList(filter = '') {
                    (part.barcode && String(part.barcode).toLowerCase().includes(search));
         });
         
-        // Show parts grid
         const grid = document.createElement('div');
         grid.className = 'parts-grid';
         
@@ -1639,20 +2255,20 @@ function renderPartModalList(filter = '') {
             const card = document.createElement('div');
             card.className = 'part-card';
             
-           let imageHTML = '';
-if (part.imageUrl && part.imageUrl.trim() !== '') {
-    let imageUrl = part.imageUrl;
-    if (imageUrl.includes('drive.google.com')) {
-        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
-        if (fileIdMatch) {
-            const fileId = fileIdMatch[1] || fileIdMatch[2];
-            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`;
-        }
-    }
-    imageHTML = `<img src="${imageUrl}" class="part-card-image" alt="${part.name}" loading="lazy">`;
-} else {
-    imageHTML = '<div class="part-card-placeholder">📦</div>';
-}
+            let imageHTML = '';
+            if (part.imageUrl && part.imageUrl.trim() !== '') {
+                let imageUrl = part.imageUrl;
+                if (imageUrl.includes('drive.google.com')) {
+                    const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+                    if (fileIdMatch) {
+                        const fileId = fileIdMatch[1] || fileIdMatch[2];
+                        imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`;
+                    }
+                }
+                imageHTML = `<img src="${imageUrl}" class="part-card-image" alt="${part.name}" loading="lazy">`;
+            } else {
+                imageHTML = '<div class="part-card-placeholder">📦</div>';
+            }
             
             card.innerHTML = `
                 ${imageHTML}
@@ -1672,9 +2288,7 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
         return;
     }
     
-    // Not searching - show category navigation
     if (!currentBrowsingCategory) {
-        // Show root categories
         const breadcrumb = document.createElement('div');
         breadcrumb.style.cssText = 'padding: 15px; background: #f8f9fa; border-bottom: 2px solid #e0e0e0; margin-bottom: 15px; font-weight: 500;';
         breadcrumb.innerHTML = '📁 All Categories';
@@ -1696,7 +2310,6 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
             const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
             const icon = subcatCount > 0 ? '📁' : '📦';
             
-            // *** FIXED: Handle category image ***
             let imageHTML = '';
             let showIcon = true;
             
@@ -1712,7 +2325,6 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
                 imageHTML = `<img src="${imageUrl}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 8px 8px 0 0; margin-bottom: 10px;" loading="lazy">`;
                 showIcon = false;
             }
-            // *** END FIX ***
             
             const card = document.createElement('div');
             card.className = 'category-nav-card';
@@ -1731,7 +2343,6 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
         
         body.appendChild(categoryGrid);
     } else {
-        // Show breadcrumb
         const breadcrumb = document.createElement('div');
         breadcrumb.style.cssText = 'padding: 15px; background: #f8f9fa; border-bottom: 2px solid #e0e0e0; margin-bottom: 15px;';
         
@@ -1748,7 +2359,6 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
         `;
         body.appendChild(breadcrumb);
         
-        // Show subcategories
         const subcategories = Object.keys(categories)
             .filter(id => categories[id].parent === currentBrowsingCategory)
             .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
@@ -1763,7 +2373,6 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
                 const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
                 const icon = subcatCount > 0 ? '📁' : '📦';
                 
-                // *** FIXED: Handle category image ***
                 let imageHTML = '';
                 let showIcon = true;
                 
@@ -1779,7 +2388,6 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
                     imageHTML = `<img src="${imageUrl}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 8px 8px 0 0; margin-bottom: 10px;" loading="lazy">`;
                     showIcon = false;
                 }
-                // *** END FIX ***
                 
                 const card = document.createElement('div');
                 card.className = 'category-nav-card';
@@ -1799,14 +2407,12 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
             body.appendChild(categoryGrid);
         }
         
-       // Show parts in this EXACT category only (not subcategories)
-const allPartsInCategory = getPartsInExactCategory(currentBrowsingCategory);
+        const allPartsInCategory = getPartsInExactCategory(currentBrowsingCategory);
         const categoryParts = allPartsInCategory.filter(partId => parts.includes(partId));
         
-        // If no parts match context filter, show all parts with a note
         const displayParts = categoryParts.length > 0 ? categoryParts : allPartsInCategory;
         
-       if (displayParts.length > 0) {
+        if (displayParts.length > 0) {
             const grid = document.createElement('div');
             grid.className = 'parts-grid';
             
@@ -1815,7 +2421,6 @@ const allPartsInCategory = getPartsInExactCategory(currentBrowsingCategory);
                 const card = document.createElement('div');
                 card.className = 'part-card';
                 
-                // Check if part is available in current context
                 const isAvailable = parts.includes(id);
                 if (!isAvailable) {
                     card.style.opacity = '0.5';
@@ -1823,19 +2428,19 @@ const allPartsInCategory = getPartsInExactCategory(currentBrowsingCategory);
                 }
                 
                 let imageHTML = '';
-if (part.imageUrl && part.imageUrl.trim() !== '') {
-    let imageUrl = part.imageUrl;
-    if (imageUrl.includes('drive.google.com')) {
-        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
-        if (fileIdMatch) {
-            const fileId = fileIdMatch[1] || fileIdMatch[2];
-            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`;
-        }
-    }
-    imageHTML = `<img src="${imageUrl}" class="part-card-image" alt="${part.name}" loading="lazy">`;
-} else {
-    imageHTML = '<div class="part-card-placeholder">📦</div>';
-}
+                if (part.imageUrl && part.imageUrl.trim() !== '') {
+                    let imageUrl = part.imageUrl;
+                    if (imageUrl.includes('drive.google.com')) {
+                        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+                        if (fileIdMatch) {
+                            const fileId = fileIdMatch[1] || fileIdMatch[2];
+                            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`;
+                        }
+                    }
+                    imageHTML = `<img src="${imageUrl}" class="part-card-image" alt="${part.name}" loading="lazy">`;
+                } else {
+                    imageHTML = '<div class="part-card-placeholder">📦</div>';
+                }
                 
                 card.innerHTML = `
                     ${imageHTML}
@@ -1856,8 +2461,7 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
         }
     }
 }
-    
- 
+
 function filterPartModal(searchTerm) {
     renderPartModalList(searchTerm);
 }
@@ -1887,17 +2491,8 @@ function selectPart(partId) {
     closePartModal();
 }
 
-function clearSelectedPart(context) {
-    selectedParts[context] = null;
-    const display = document.getElementById(context + 'PartDisplay');
-    if (display) {
-        display.innerHTML = '';
-        display.classList.remove('show');
-    }
-}
-
 // ============================================
-// PART DETAIL MODAL WITH HISTORY
+// PART DETAIL MODAL
 // ============================================
 
 function openPartDetail(partId) {
@@ -1908,17 +2503,17 @@ function openPartDetail(partId) {
     document.getElementById('partDetailTitle').textContent = part.name;
     
     let imageHTML = '';
-if (part.imageUrl && part.imageUrl.trim() !== '') {
-    let imageUrl = part.imageUrl;
-    if (imageUrl.includes('drive.google.com')) {
-        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
-        if (fileIdMatch) {
-            const fileId = fileIdMatch[1] || fileIdMatch[2];
-            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`;  // Larger size!
+    if (part.imageUrl && part.imageUrl.trim() !== '') {
+        let imageUrl = part.imageUrl;
+        if (imageUrl.includes('drive.google.com')) {
+            const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+            if (fileIdMatch) {
+                const fileId = fileIdMatch[1] || fileIdMatch[2];
+                imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`;
+            }
         }
+        imageHTML = `<img src="${imageUrl}" style="max-width: 400px; max-height: 400px; border-radius: 12px; margin-bottom: 20px; display: block;" loading="lazy">`;
     }
-    imageHTML = `<img src="${imageUrl}" style="max-width: 400px; max-height: 400px; border-radius: 12px; margin-bottom: 20px; display: block;" loading="lazy">`;
-}
     
     let stockHTML = '<h3>Current Stock</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px;">';
     stockHTML += `<div class="stock-badge ${part.shop < part.minStock ? 'stock-low' : 'stock-ok'}">Shop: ${part.shop} (Min: ${part.minStock})</div>`;
@@ -1936,11 +2531,9 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
     });
     actionsHTML += '</div>';
     
-    // Use on Job section
     let useOnJobHTML = '<h3>🔧 Use on Job</h3>';
     useOnJobHTML += '<div style="background: #f8f9fa; border-radius: 12px; padding: 15px; margin-bottom: 20px;">';
     
-    // Check if any truck has this part
     const trucksWithPart = Object.keys(trucks).filter(id => trucks[id].active && part[id] > 0);
     
     if (trucksWithPart.length > 0) {
@@ -1976,16 +2569,21 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
     if (part.price > 0) infoHTML += `<p><strong>Price:</strong> $${part.price.toFixed(2)}</p>`;
     if (part.purchaseLink) infoHTML += `<p><strong>Purchase:</strong> <a href="${part.purchaseLink}" target="_blank">Link</a></p>`;
     
-    // Add history for this part
     const partHistory = history.filter(h => h.details && h.details.includes(part.name)).slice(0, 10);
     if (partHistory.length > 0) {
         infoHTML += '<h3 style="margin-top: 20px;">Recent History</h3>';
         partHistory.forEach(h => {
+            let locationHTML = '';
+            if (h.address) {
+                locationHTML = `<br><small style="color: #666;">📍 ${h.address}</small>`;
+            }
+            
             infoHTML += `
                 <div class="history-item" style="margin-bottom: 8px;">
                     <strong>${h.action}</strong> - ${h.details}
                     <span class="tech-badge">${h.tech}</span><br>
                     <small style="color: #666;">📅 ${h.timestamp}</small>
+                    ${locationHTML}
                 </div>
             `;
         });
@@ -2000,447 +2598,8 @@ function closePartDetailModal() {
     document.getElementById('partDetailModal').classList.remove('show');
 }
 
-async function quickReceive(partId) {
-    const qty = prompt('Enter quantity to receive:');
-    if (!qty || isNaN(qty) || parseInt(qty) <= 0) return;
-    
-    showProcessing(true);
-    await loadInventory();
-    const part = inventory[partId];
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
-                    shop: part.shop + parseInt(qty)
-                }
-            })
-        });
-        
-        await addTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Received Stock',
-            details: `${part.name}: ${qty} added to shop`,
-            quantity: parseInt(qty),
-            from: 'Supplier',
-            to: 'Shop'
-        });
-        
-        await loadInventory();
-        updateDashboard();
-        closePartDetailModal();
-        showProcessing(false);
-        showToast('Stock received!');
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error receiving stock', 'error');
-    }
-}
-
-async function quickLoadToTruck(partId, truckId) {
-    const qty = prompt(`Enter quantity to load onto ${trucks[truckId].name}:`);
-    if (!qty || isNaN(qty) || parseInt(qty) <= 0) return;
-    
-    showProcessing(true);
-    await loadInventory();
-    const part = inventory[partId];
-    
-    if (part.shop < parseInt(qty)) {
-        showProcessing(false);
-        showToast(`Only ${part.shop} available in shop`, 'error');
-        return;
-    }
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
-                    shop: part.shop - parseInt(qty),
-                    [truckId]: part[truckId] + parseInt(qty)
-                }
-            })
-        });
-        
-        await addTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Loaded Truck',
-            details: `${part.name}: ${qty} loaded onto ${trucks[truckId].name}`,
-            quantity: parseInt(qty),
-            from: 'Shop',
-            to: trucks[truckId].name
-        });
-        
-        await loadInventory();
-        updateDashboard();
-        closePartDetailModal();
-        showProcessing(false);
-        showToast('Truck loaded!');
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error loading truck', 'error');
-    }
-}
-
-async function quickUseOnJob(partId) {
-    const truck = document.getElementById('useJobTruck').value;
-    const qty = parseInt(document.getElementById('useJobQty').value);
-    const jobName = document.getElementById('useJobName').value.trim() || 'Job';
-    
-    if (!qty || qty <= 0) {
-        showToast('Enter a valid quantity', 'error');
-        return;
-    }
-    
-    showProcessing(true);
-    await loadInventory();
-    
-    const part = inventory[partId];
-    if (part[truck] < qty) {
-        showProcessing(false);
-        showToast(`Only ${part[truck]} available on ${trucks[truck].name}`, 'error');
-        return;
-    }
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
-                    [truck]: part[truck] - qty
-                }
-            })
-        });
-        
-        await addTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Used on Job',
-            details: `${part.name}: ${qty} used from ${trucks[truck].name}`,
-            quantity: qty,
-            from: trucks[truck].name,
-            to: 'Customer',
-            jobName: jobName
-        });
-        
-        await loadInventory();
-        updateDashboard();
-        closePartDetailModal();
-        showProcessing(false);
-        showToast(`Used ${qty}x ${part.name} on ${jobName}!`);
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error recording usage', 'error');
-    }
-}
-
 // ============================================
-// QUICK ACTIONS
-// ============================================
-
-async function useParts() {
-    const truck = document.getElementById('useTruck').value;
-    const partId = selectedParts.use;
-    const qty = parseInt(document.getElementById('useQty').value);
-    const jobName = document.getElementById('jobName').value.trim() || 'Job';
-    
-    if (!partId) {
-        showToast('Select a part', 'error');
-        return;
-    }
-    
-    showProcessing(true);
-    await loadInventory();
-    
-    const part = inventory[partId];
-    if (part[truck] < qty) {
-        showProcessing(false);
-        showToast(`Only ${part[truck]} available on truck`, 'error');
-        return;
-    }
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
-                    [truck]: part[truck] - qty
-                }
-            })
-        });
-        
-        await addTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Used on Job',
-            details: `${part.name}: ${qty} used from ${trucks[truck].name}`,
-            quantity: qty,
-            from: trucks[truck].name,
-            to: 'Customer',
-            jobName: jobName
-        });
-        
-        await loadInventory();
-        document.getElementById('useQty').value = '1';
-        document.getElementById('jobName').value = '';
-        clearSelectedPart('use');
-        updateDashboard();
-        showProcessing(false);
-        showToast('Usage recorded!');
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error recording usage', 'error');
-    }
-}
-
-async function loadTruck() {
-    const partId = selectedParts.load;
-    const qty = parseInt(document.getElementById('loadQty').value);
-    const truck = document.getElementById('loadTruck').value;
-    
-    if (!partId) {
-        showToast('Select a part', 'error');
-        return;
-    }
-    
-    showProcessing(true);
-    await loadInventory();
-    
-    const part = inventory[partId];
-    if (part.shop < qty) {
-        showProcessing(false);
-        showToast(`Only ${part.shop} available in shop`, 'error');
-        return;
-    }
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
-                    shop: part.shop - qty,
-                    [truck]: part[truck] + qty
-                }
-            })
-        });
-        
-        await addTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Loaded Truck',
-            details: `${part.name}: ${qty} loaded onto ${trucks[truck].name}`,
-            quantity: qty,
-            from: 'Shop',
-            to: trucks[truck].name
-        });
-        
-        await loadInventory();
-        document.getElementById('loadQty').value = '1';
-        clearSelectedPart('load');
-        updateDashboard();
-        showProcessing(false);
-        showToast('Truck loaded!');
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error loading truck', 'error');
-    }
-}
-
-async function returnToShop() {
-    const truck = document.getElementById('returnTruck').value;
-    const partId = selectedParts.return;
-    const qty = parseInt(document.getElementById('returnQty').value);
-    
-    if (!partId) {
-        showToast('Select a part', 'error');
-        return;
-    }
-    
-    showProcessing(true);
-    await loadInventory();
-    
-    const part = inventory[partId];
-    if (part[truck] < qty) {
-        showProcessing(false);
-        showToast(`Only ${part[truck]} available on truck`, 'error');
-        return;
-    }
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
-                    [truck]: part[truck] - qty,
-                    shop: part.shop + qty
-                }
-            })
-        });
-        
-        await addTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Returned to Shop',
-            details: `${part.name}: ${qty} returned from ${trucks[truck].name}`,
-            quantity: qty,
-            from: trucks[truck].name,
-            to: 'Shop'
-        });
-        
-        await loadInventory();
-        document.getElementById('returnQty').value = '1';
-        clearSelectedPart('return');
-        updateDashboard();
-        showProcessing(false);
-        showToast('Returned to shop!');
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error returning to shop', 'error');
-    }
-}
-
-async function transferParts() {
-    const fromTruck = document.getElementById('transferFromTruck').value;
-    const toTruck = document.getElementById('transferToTruck').value;
-    const partId = selectedParts.transfer;
-    const qty = parseInt(document.getElementById('transferQty').value);
-    
-    if (!partId) {
-        showToast('Select a part', 'error');
-        return;
-    }
-    
-    if (fromTruck === toTruck) {
-        showToast('Cannot transfer to same truck', 'error');
-        return;
-    }
-    
-    showProcessing(true);
-    await loadInventory();
-    
-    const part = inventory[partId];
-    if (part[fromTruck] < qty) {
-        showProcessing(false);
-        showToast(`Only ${part[fromTruck]} available on ${trucks[fromTruck].name}`, 'error');
-        return;
-    }
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
-                    [fromTruck]: part[fromTruck] - qty,
-                    [toTruck]: part[toTruck] + qty
-                }
-            })
-        });
-        
-        await addTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Transferred',
-            details: `${part.name}: ${qty} from ${trucks[fromTruck].name} to ${trucks[toTruck].name}`,
-            quantity: qty,
-            from: trucks[fromTruck].name,
-            to: trucks[toTruck].name
-        });
-        
-        await loadInventory();
-        document.getElementById('transferQty').value = '1';
-        clearSelectedPart('transfer');
-        updateDashboard();
-        showProcessing(false);
-        showToast('Transfer complete!');
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error transferring', 'error');
-    }
-}
-
-async function receiveStock() {
-    const partId = selectedParts.receive;
-    const qty = parseInt(document.getElementById('receiveQty').value);
-    
-    if (!partId) {
-        showToast('Select a part', 'error');
-        return;
-    }
-    
-    showProcessing(true);
-    await loadInventory();
-    
-    const part = inventory[partId];
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
-                    shop: part.shop + qty
-                }
-            })
-        });
-        
-        await addTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Received Stock',
-            details: `${part.name}: ${qty} received to shop`,
-            quantity: qty,
-            from: 'Supplier',
-            to: 'Shop'
-        });
-        
-        await loadInventory();
-        document.getElementById('receiveQty').value = '1';
-        clearSelectedPart('receive');
-        updateDashboard();
-        showProcessing(false);
-        showToast('Stock received!');
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error receiving stock', 'error');
-    }
-}
-
-// ============================================
-// BARCODE SCANNER - CAMERA
+// BARCODE SCANNER
 // ============================================
 
 function startCameraBarcodeScanner(targetInputId) {
@@ -2459,7 +2618,6 @@ function startCameraBarcodeScanner(targetInputId) {
         if (result) {
             const code = result.text;
             
-            // Prevent duplicate scans
             const now = Date.now();
             if (code === lastScannedCode && now - lastScanTime < 2000) {
                 return;
@@ -2468,7 +2626,6 @@ function startCameraBarcodeScanner(targetInputId) {
             lastScannedCode = code;
             lastScanTime = now;
             
-            // Set the input value
             const input = document.getElementById(targetInputId);
             if (input) {
                 input.value = code;
@@ -2488,14 +2645,9 @@ function stopCameraBarcodeScanner() {
     currentBarcodeTarget = null;
 }
 
-// ============================================
-// BARCODE SCANNER - PHYSICAL SCANNER
-// ============================================
-
 async function handlePhysicalScannerInput(barcode) {
     console.log('Physical scanner input:', barcode);
     
-    // Try to find part by barcode
     const partId = Object.keys(inventory).find(id => inventory[id].barcode === barcode);
     
     if (!partId) {
@@ -2503,426 +2655,7 @@ async function handlePhysicalScannerInput(barcode) {
         return;
     }
     
-    const part = inventory[partId];
-    
-    if (!scanModeActive) {
-        // Not in scan mode - just show the part
-        openPartDetail(partId);
-        return;
-    }
-    
-    // In scan mode - perform the action
-    const action = document.getElementById('scanAction').value;
-    const truck = document.getElementById('scanTruck').value;
-    const jobName = document.getElementById('scanJobName').value.trim() || 'Job';
-    
-    if (!action || !truck) {
-        showToast('Select action and truck first', 'error');
-        return;
-    }
-    
-    showProcessing(true);
-    await loadInventory();
-    const updatedPart = inventory[partId];
-    
-    try {
-        if (action === 'use') {
-            if (updatedPart[truck] < 1) {
-                showProcessing(false);
-                showToast(`No ${part.name} on ${trucks[truck].name}`, 'error');
-                return;
-            }
-            
-            await fetch(SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify({
-                    action: 'updatePartQuantity',
-                    partId: partId,
-                    updates: {
-                        [truck]: updatedPart[truck] - 1
-                    }
-                })
-            });
-            
-            await addTransaction({
-                timestamp: new Date().toLocaleString(),
-                tech: currentUser,
-                action: 'Used on Job (Scan)',
-                details: `${part.name}: 1 used from ${trucks[truck].name}`,
-                quantity: 1,
-                from: trucks[truck].name,
-                to: 'Customer',
-                jobName: jobName
-            });
-            
-            showToast(`✅ ${part.name} used (${updatedPart[truck] - 1} left)`);
-            
-        } else if (action === 'load') {
-            if (updatedPart.shop < 1) {
-                showProcessing(false);
-                showToast(`No ${part.name} in shop`, 'error');
-                return;
-            }
-            
-            await fetch(SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify({
-                    action: 'updatePartQuantity',
-                    partId: partId,
-                    updates: {
-                        shop: updatedPart.shop - 1,
-                        [truck]: updatedPart[truck] + 1
-                    }
-                })
-            });
-            
-            await addTransaction({
-                timestamp: new Date().toLocaleString(),
-                tech: currentUser,
-                action: 'Loaded Truck (Scan)',
-                details: `${part.name}: 1 loaded onto ${trucks[truck].name}`,
-                quantity: 1,
-                from: 'Shop',
-                to: trucks[truck].name
-            });
-            
-            showToast(`✅ ${part.name} loaded (${updatedPart[truck] + 1} on truck)`);
-            
-        } else if (action === 'return') {
-            if (updatedPart[truck] < 1) {
-                showProcessing(false);
-                showToast(`No ${part.name} on ${trucks[truck].name}`, 'error');
-                return;
-            }
-            
-            await fetch(SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify({
-                    action: 'updatePartQuantity',
-                    partId: partId,
-                    updates: {
-                        [truck]: updatedPart[truck] - 1,
-                        shop: updatedPart.shop + 1
-                    }
-                })
-            });
-            
-            await addTransaction({
-                timestamp: new Date().toLocaleString(),
-                tech: currentUser,
-                action: 'Returned to Shop (Scan)',
-                details: `${part.name}: 1 returned from ${trucks[truck].name}`,
-                quantity: 1,
-                from: trucks[truck].name,
-                to: 'Shop'
-            });
-            
-            showToast(`✅ ${part.name} returned (${updatedPart.shop + 1} in shop)`);
-            
-        } else if (action === 'receive') {
-            await fetch(SCRIPT_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify({
-                    action: 'updatePartQuantity',
-                    partId: partId,
-                    updates: {
-                        shop: updatedPart.shop + 1
-                    }
-                })
-            });
-            
-            await addTransaction({
-                timestamp: new Date().toLocaleString(),
-                tech: currentUser,
-                action: 'Received Stock (Scan)',
-                details: `${part.name}: 1 received to shop`,
-                quantity: 1,
-                from: 'Supplier',
-                to: 'Shop'
-            });
-            
-            showToast(`✅ ${part.name} received (${updatedPart.shop + 1} in shop)`);
-        }
-        
-        await loadInventory();
-        updateDashboard();
-        showProcessing(false);
-        
-    } catch (error) {
-        showProcessing(false);
-        console.error('Scan action error:', error);
-        showToast('Error processing scan', 'error');
-    }
-}
-
-// ============================================
-// QUICK LOAD / RESTOCK
-// ============================================
-
-async function updateQuickLoadList() {
-    const container = document.getElementById('quickLoadList');
-    const btn = document.getElementById('quickLoadBtn');
-    const location = document.getElementById('quickLoadLocation').value;
-    
-    if (!location) {
-        container.innerHTML = '<p style="color: #666;">Select a location</p>';
-        btn.style.display = 'none';
-        return;
-    }
-    
-    // Get active seasons
-    const activeSeasons = settings.ActiveSeasons ? settings.ActiveSeasons.split(',') : ['heating', 'cooling', 'year-round'];
-    
-    showProcessing(true);
-    
-    try {
-        const response = await fetch(SCRIPT_URL + '?action=getLowStockItems');
-        const result = await response.json();
-        
-        if (!result.success || !result.data) {
-            container.innerHTML = '<p style="color: #e74c3c;">Error loading data</p>';
-            btn.style.display = 'none';
-            showProcessing(false);
-            return;
-        }
-        
-        let items = location === 'shop' ? result.data.shop : (result.data.trucks[location] || []);
-        
-        // Filter by active seasons
-        items = items.filter(item => {
-            const part = inventory[item.id];
-            return part && activeSeasons.includes(part.season);
-        });
-        
-        if (items.length === 0) {
-            container.innerHTML = '<p style="color: #28a745;">✅ All items fully stocked!</p>';
-            btn.style.display = 'none';
-            showProcessing(false);
-            return;
-        }
-        
-        container.innerHTML = '';
-        items.forEach(item => {
-            const part = inventory[item.id];
-            const div = document.createElement('div');
-            div.className = 'quick-load-item';
-            
-            let imageHTML = '';
-if (part.imageUrl && part.imageUrl.trim() !== '') {
-    // For Google Drive links, ensure proper format
-    let imageUrl = part.imageUrl;
-    if (imageUrl.includes('drive.google.com')) {
-        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
-        if (fileIdMatch) {
-            const fileId = fileIdMatch[1] || fileIdMatch[2];
-            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w200`;
-        }
-    }
-    imageHTML = `<img src="${imageUrl}" class="quick-load-image" loading="lazy">`;
-} else {
-    imageHTML = '<div style="width: 60px; height: 60px; background: #f0f0f0; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 2em;">📦</div>';
-}
-            
-            div.innerHTML = `
-                <input type="checkbox" class="quick-load-checkbox" data-part-id="${item.id}">
-                ${imageHTML}
-                <div>
-                    <strong>${part.name}</strong><br>
-                    <small>Part #: ${part.id} | Current: ${item.current} | Min: ${item.minimum} | Need: ${item.needed}</small>
-                </div>
-                <input type="number" class="quick-load-qty" data-part-id="${item.id}" value="${item.needed}" min="1" max="${location === 'shop' ? 9999 : item.shopQty}" style="width: 80px; padding: 8px; border: 2px solid #e0e0e0; border-radius: 8px;">
-            `;
-            
-            container.appendChild(div);
-        });
-        
-        btn.style.display = 'block';
-        showProcessing(false);
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        container.innerHTML = '<p style="color: #e74c3c;">Error loading data</p>';
-        btn.style.display = 'none';
-    }
-}
-
-async function processQuickLoad() {
-    const checkboxes = document.querySelectorAll('.quick-load-checkbox:checked');
-    const location = document.getElementById('quickLoadLocation').value;
-    
-    if (checkboxes.length === 0) {
-        showToast('Select at least one item', 'error');
-        return;
-    }
-    
-    showProcessing(true);
-    await loadInventory();
-    
-    try {
-        for (const checkbox of checkboxes) {
-            const partId = checkbox.getAttribute('data-part-id');
-            const qtyInput = document.querySelector(`.quick-load-qty[data-part-id="${partId}"]`);
-            const qty = parseInt(qtyInput.value) || 0;
-            
-            if (qty <= 0) continue;
-            
-            const part = inventory[partId];
-            
-            if (location === 'shop') {
-                await fetch(SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify({
-                        action: 'updatePartQuantity',
-                        partId: partId,
-                        updates: { shop: part.shop + qty }
-                    })
-                });
-                
-                await addTransaction({
-                    timestamp: new Date().toLocaleString(),
-                    tech: currentUser,
-                    action: 'Restocked Shop',
-                    details: `${part.name}: ${qty} added to shop`,
-                    quantity: qty,
-                    from: 'Supplier',
-                    to: 'Shop'
-                });
-            } else {
-                if (part.shop < qty) continue;
-                
-                await fetch(SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify({
-                        action: 'updatePartQuantity',
-                        partId: partId,
-                        updates: {
-                            shop: part.shop - qty,
-                            [location]: part[location] + qty
-                        }
-                    })
-                });
-                
-                await addTransaction({
-                    timestamp: new Date().toLocaleString(),
-                    tech: currentUser,
-                    action: 'Quick Load',
-                    details: `${part.name}: ${qty} loaded onto ${trucks[location].name}`,
-                    quantity: qty,
-                    from: 'Shop',
-                    to: trucks[location].name
-                });
-            }
-        }
-        
-        await loadInventory();
-        updateDashboard();
-        await updateQuickLoadList();
-        showProcessing(false);
-        showToast('Quick Load complete!');
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error processing quick load', 'error');
-    }
-}
-
-// ============================================
-// ADD PART
-// ============================================
-
-async function addPart() {
-    const partNumber = document.getElementById('partNumber').value.trim();
-    const name = document.getElementById('partName').value.trim();
-    const categoryId = document.getElementById('partCategory').value;
-    const barcode = document.getElementById('partBarcode').value.trim();
-    const imageUrl = document.getElementById('partImageUrl').value.trim() || uploadedImageUrl;
-    const season = document.getElementById('partSeason').value;
-    const shopQty = parseInt(document.getElementById('shopQty').value);
-    const minStock = parseInt(document.getElementById('minStock').value);
-    const price = parseFloat(document.getElementById('partPrice').value) || 0;
-    const link = document.getElementById('partLink').value.trim();
-    
-    if (!partNumber || !name || !categoryId) {
-        showToast('Fill required fields', 'error');
-        return;
-    }
-    
-    if (inventory[partNumber]) {
-        showToast('Part number already exists', 'error');
-        return;
-    }
-    
-    showProcessing(true);
-    
-    const newPart = {
-        partNumber: partNumber,
-        name: name,
-        category: categoryId,
-        barcode: barcode,
-        imageUrl: imageUrl,
-        season: season,
-        shop: shopQty,
-        minStock: minStock,
-        price: price,
-        purchaseLink: link
-    };
-    
-    // Add truck quantities (all 0 initially)
-    Object.keys(trucks).forEach(truckId => {
-        newPart[truckId] = 0;
-    });
-    
-    // Add per-truck minimums
-    Object.keys(trucks).forEach(truckId => {
-        const minInput = document.getElementById('minTruck_' + truckId);
-        newPart['minTruck_' + truckId] = minInput ? parseInt(minInput.value) || 0 : 0;
-    });
-    
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'addPart',
-                part: newPart
-            })
-        });
-        
-        await addTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Added Part',
-            details: `${name} (${categories[categoryId].name})`,
-            quantity: shopQty,
-            from: '',
-            to: 'Shop'
-        });
-        
-        await loadInventory();
-        
-        // Clear form
-        document.getElementById('partNumber').value = '';
-        document.getElementById('partName').value = '';
-        document.getElementById('partBarcode').value = '';
-        document.getElementById('partImageUrl').value = '';
-        document.getElementById('shopQty').value = '0';
-        clearImageUpload();
-        
-        populateDropdowns();
-        updateDashboard();
-        showProcessing(false);
-        showToast('Part added!');
-    } catch (error) {
-        showProcessing(false);
-        console.error('Error:', error);
-        showToast('Error adding part', 'error');
-    }
+    openPartDetail(partId);
 }
 
 // ============================================
@@ -2999,10 +2732,9 @@ function renderCategoryTree() {
     
     container.innerHTML = '';
     
-    // Recursive function to render category and its children
     function renderCategory(catId, level = 0) {
         const cat = categories[catId];
-        const indent = level * 30; // 30px per level
+        const indent = level * 30;
         
         const div = document.createElement('div');
         div.className = 'category-tree-item';
@@ -3010,13 +2742,9 @@ function renderCategoryTree() {
         div.style.borderLeft = level > 0 ? '3px solid #e0e0e0' : 'none';
         div.style.paddingLeft = level > 0 ? '15px' : '0';
         
-        // Get part count (EXACT category only, not including subcategories)
         const partCount = getPartsInExactCategory(catId).length;
-        
-        // Get direct children count
         const childCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
         
-        // Icon based on level and children
         let icon = '📦';
         if (childCount > 0) {
             icon = level === 0 ? '📂' : '📁';
@@ -3037,7 +2765,6 @@ function renderCategoryTree() {
         
         container.appendChild(div);
         
-        // Render children recursively
         const children = Object.keys(categories)
             .filter(id => categories[id].parent === catId)
             .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
@@ -3047,7 +2774,6 @@ function renderCategoryTree() {
         });
     }
     
-    // Get root categories and render them
     const rootCategories = Object.keys(categories)
         .filter(id => !categories[id].parent)
         .sort((a, b) => categories[a].name.localeCompare(categories[b].name));
@@ -3060,6 +2786,7 @@ function renderCategoryTree() {
         container.innerHTML = '<p style="color: #666; text-align: center; padding: 40px;">No categories yet</p>';
     }
 }
+
 async function addCategory() {
     const name = document.getElementById('newCategoryName').value.trim();
     const parent = document.getElementById('newCategoryParent').value;
@@ -3098,6 +2825,7 @@ async function addCategory() {
         showToast('Error adding category', 'error');
     }
 }
+
 async function deleteCategory(id) {
     if (!confirm('Delete this category? Parts in this category will be set to "Other".')) return;
     
@@ -3125,30 +2853,6 @@ async function deleteCategory(id) {
 }
 
 // ============================================
-// HISTORY
-// ============================================
-
-function updateHistory() {
-    const list = document.getElementById('historyList');
-    if (!list) return;
-    
-    if (history.length === 0) {
-        list.innerHTML = '<p style="color: #666;">No activity yet</p>';
-        return;
-    }
-    
-    const displayHistory = isOwner ? history : history.filter(e => e.tech === currentUser);
-    
-    list.innerHTML = displayHistory.slice(0, 100).map(e => `
-        <div class="history-item">
-            <strong>${e.action}</strong> - ${e.details}
-            <span class="tech-badge">${e.tech}</span><br>
-            <small style="color: #666;">📅 ${e.timestamp}${e.jobName ? ` | 👤 ${e.jobName}` : ''}</small>
-        </div>
-    `).join('');
-}
-
-// ============================================
 // SETTINGS
 // ============================================
 
@@ -3157,13 +2861,11 @@ function updateSettings() {
     updateTruckList();
     updateUserList();
     
-    // Load active seasons
     const activeSeasons = settings.ActiveSeasons ? settings.ActiveSeasons.split(',') : ['heating', 'cooling', 'year-round'];
     document.querySelectorAll('.active-season-cb').forEach(cb => {
         cb.checked = activeSeasons.includes(cb.value);
     });
     
-    // Show/hide PIN change based on permission
     const changePinBtn = document.getElementById('changePinBtn');
     if (changePinBtn) {
         changePinBtn.style.display = (isOwner || canEditPIN) ? 'block' : 'none';
@@ -3228,7 +2930,6 @@ async function changePIN() {
     showProcessing(true);
     
     try {
-        // Check if new PIN already exists
         await fetch(SCRIPT_URL + '?action=readUsers').then(r => r.json()).then(result => {
             if (result.success && result.data) {
                 for (let i = 1; i < result.data.length; i++) {
@@ -3476,46 +3177,180 @@ async function deleteUser(pin) {
 }
 
 // ============================================
-// TRANSACTION LOGGING
+// QUICK LOAD (remaining functions - add these if missing)
 // ============================================
 
-async function addTransaction(transaction) {
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'addTransaction',
-                transaction: transaction
-            })
-        });
-    } catch (error) {
-        console.error('Transaction log error:', error);
-    }
-}
-
-// ============================================
-// UI HELPERS
-// ============================================
-
-function showProcessing(show) {
-    const overlay = document.getElementById('processingOverlay');
-    if (show) {
-        overlay.classList.add('show');
-    } else {
-        overlay.classList.remove('show');
-    }
-}
-
-function showToast(message, type = 'success') {
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
+async function updateQuickLoadList() {
+    const container = document.getElementById('quickLoadList');
+    const btn = document.getElementById('quickLoadBtn');
+    const location = document.getElementById('quickLoadLocation').value;
     
-    setTimeout(() => toast.classList.add('show'), 100);
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => document.body.removeChild(toast), 300);
-    }, 3000);
+    if (!location) {
+        container.innerHTML = '<p style="color: #666;">Select a location</p>';
+        btn.style.display = 'none';
+        return;
+    }
+    
+    const activeSeasons = settings.ActiveSeasons ? settings.ActiveSeasons.split(',') : ['heating', 'cooling', 'year-round'];
+    
+    showProcessing(true);
+    
+    try {
+        const response = await fetch(SCRIPT_URL + '?action=getLowStockItems');
+        const result = await response.json();
+        
+        if (!result.success || !result.data) {
+            container.innerHTML = '<p style="color: #e74c3c;">Error loading data</p>';
+            btn.style.display = 'none';
+            showProcessing(false);
+            return;
+        }
+        
+        let items = location === 'shop' ? result.data.shop : (result.data.trucks[location] || []);
+        
+        items = items.filter(item => {
+            const part = inventory[item.id];
+            return part && activeSeasons.includes(part.season);
+        });
+        
+        if (items.length === 0) {
+            container.innerHTML = '<p style="color: #28a745;">✅ All items fully stocked!</p>';
+            btn.style.display = 'none';
+            showProcessing(false);
+            return;
+        }
+        
+        container.innerHTML = '';
+        items.forEach(item => {
+            const part = inventory[item.id];
+            const div = document.createElement('div');
+            div.className = 'quick-load-item';
+            
+            let imageHTML = '';
+            if (part.imageUrl && part.imageUrl.trim() !== '') {
+                let imageUrl = part.imageUrl;
+                if (imageUrl.includes('drive.google.com')) {
+                    const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+                    if (fileIdMatch) {
+                        const fileId = fileIdMatch[1] || fileIdMatch[2];
+                        imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w200`;
+                    }
+                }
+                imageHTML = `<img src="${imageUrl}" class="quick-load-image" loading="lazy">`;
+            } else {
+                imageHTML = '<div style="width: 60px; height: 60px; background: #f0f0f0; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 2em;">📦</div>';
+            }
+            
+            div.innerHTML = `
+                <input type="checkbox" class="quick-load-checkbox" data-part-id="${item.id}">
+                ${imageHTML}
+                <div>
+                    <strong>${part.name}</strong><br>
+                    <small>Part #: ${part.id} | Current: ${item.current} | Min: ${item.minimum} | Need: ${item.needed}</small>
+                </div>
+                <input type="number" class="quick-load-qty" data-part-id="${item.id}" value="${item.needed}" min="1" max="${location === 'shop' ? 9999 : item.shopQty}" style="width: 80px; padding: 8px; border: 2px solid #e0e0e0; border-radius: 8px;">
+            `;
+            
+            container.appendChild(div);
+        });
+        
+        btn.style.display = 'block';
+        showProcessing(false);
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        container.innerHTML = '<p style="color: #e74c3c;">Error loading data</p>';
+        btn.style.display = 'none';
+    }
+}
+
+async function processQuickLoad() {
+    const checkboxes = document.querySelectorAll('.quick-load-checkbox:checked');
+    const location = document.getElementById('quickLoadLocation').value;
+    
+    if (checkboxes.length === 0) {
+        showToast('Select at least one item', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    
+    const gpsLocation = await getCurrentLocation();
+    
+    await loadInventory();
+    
+    try {
+        for (const checkbox of checkboxes) {
+            const partId = checkbox.getAttribute('data-part-id');
+            const qtyInput = document.querySelector(`.quick-load-qty[data-part-id="${partId}"]`);
+            const qty = parseInt(qtyInput.value) || 0;
+            
+            if (qty <= 0) continue;
+            
+            const part = inventory[partId];
+            
+            if (location === 'shop') {
+                await fetch(SCRIPT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({
+                        action: 'updatePartQuantity',
+                        partId: partId,
+                        updates: { shop: part.shop + qty }
+                    })
+                });
+                
+                await addTransaction({
+                    timestamp: new Date().toLocaleString(),
+                    tech: currentUser,
+                    action: 'Restocked Shop',
+                    details: `${part.name}: ${qty} added to shop`,
+                    quantity: qty,
+                    from: 'Supplier',
+                    to: 'Shop',
+                    address: gpsLocation ? gpsLocation.address : '',
+                    lat: gpsLocation ? gpsLocation.lat : '',
+                    lon: gpsLocation ? gpsLocation.lon : ''
+                });
+            } else {
+                if (part.shop < qty) continue;
+                
+                await fetch(SCRIPT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify({
+                        action: 'updatePartQuantity',
+                        partId: partId,
+                        updates: {
+                            shop: part.shop - qty,
+                            [location]: part[location] + qty
+                        }
+                    })
+                });
+                
+                await addTransaction({
+                    timestamp: new Date().toLocaleString(),
+                    tech: currentUser,
+                    action: 'Quick Load',
+                    details: `${part.name}: ${qty} loaded onto ${trucks[location].name}`,
+                    quantity: qty,
+                    from: 'Shop',
+                    to: trucks[location].name,
+                    address: gpsLocation ? gpsLocation.address : '',
+                    lat: gpsLocation ? gpsLocation.lat : '',
+                    lon: gpsLocation ? gpsLocation.lon : ''
+                });
+            }
+        }
+        
+        await loadInventory();
+        updateDashboard();
+        await updateQuickLoadList();
+        showProcessing(false);
+        showToast('Quick Load complete!');
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error processing quick load', 'error');
+    }
 }
