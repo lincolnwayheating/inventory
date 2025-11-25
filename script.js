@@ -1898,6 +1898,38 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
     });
     actionsHTML += '</div>';
     
+    // Use on Job section
+    let useOnJobHTML = '<h3>🔧 Use on Job</h3>';
+    useOnJobHTML += '<div style="background: #f8f9fa; border-radius: 12px; padding: 15px; margin-bottom: 20px;">';
+    
+    // Check if any truck has this part
+    const trucksWithPart = Object.keys(trucks).filter(id => trucks[id].active && part[id] > 0);
+    
+    if (trucksWithPart.length > 0) {
+        useOnJobHTML += `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                <div>
+                    <label style="display: block; margin-bottom: 5px; font-weight: 600;">From Truck</label>
+                    <select id="useJobTruck" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+                        ${trucksWithPart.map(id => `<option value="${id}" ${id === userTruck ? 'selected' : ''}>${trucks[id].name} (${part[id]} avail)</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label style="display: block; margin-bottom: 5px; font-weight: 600;">Quantity</label>
+                    <input type="number" id="useJobQty" value="1" min="1" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+                </div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display: block; margin-bottom: 5px; font-weight: 600;">Job Name / Address</label>
+                <input type="text" id="useJobName" placeholder="e.g., 123 Main St or Smith Residence" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
+            </div>
+            <button class="btn btn-primary" onclick="quickUseOnJob('${partId}')" style="width: 100%;">🔧 Use Part on Job</button>
+        `;
+    } else {
+        useOnJobHTML += '<p style="text-align: center; color: #666;">No trucks have this part in stock</p>';
+    }
+    useOnJobHTML += '</div>';
+    
     let infoHTML = '<h3>Details</h3>';
     infoHTML += `<p><strong>Part Number:</strong> ${part.id}</p>`;
     infoHTML += `<p><strong>Category:</strong> ${categories[part.category]?.name || 'N/A'}</p>`;
@@ -1921,7 +1953,7 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
         });
     }
     
-    body.innerHTML = imageHTML + stockHTML + actionsHTML + infoHTML;
+    body.innerHTML = imageHTML + stockHTML + actionsHTML + useOnJobHTML + infoHTML;
     
     modal.classList.add('show');
 }
@@ -2020,6 +2052,62 @@ async function quickLoadToTruck(partId, truckId) {
         showProcessing(false);
         console.error('Error:', error);
         showToast('Error loading truck', 'error');
+    }
+}
+
+async function quickUseOnJob(partId) {
+    const truck = document.getElementById('useJobTruck').value;
+    const qty = parseInt(document.getElementById('useJobQty').value);
+    const jobName = document.getElementById('useJobName').value.trim() || 'Job';
+    
+    if (!qty || qty <= 0) {
+        showToast('Enter a valid quantity', 'error');
+        return;
+    }
+    
+    showProcessing(true);
+    await loadInventory();
+    
+    const part = inventory[partId];
+    if (part[truck] < qty) {
+        showProcessing(false);
+        showToast(`Only ${part[truck]} available on ${trucks[truck].name}`, 'error');
+        return;
+    }
+    
+    try {
+        await fetch(SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'updatePartQuantity',
+                partId: partId,
+                updates: {
+                    [truck]: part[truck] - qty
+                }
+            })
+        });
+        
+        await addTransaction({
+            timestamp: new Date().toLocaleString(),
+            tech: currentUser,
+            action: 'Used on Job',
+            details: `${part.name}: ${qty} used from ${trucks[truck].name}`,
+            quantity: qty,
+            from: trucks[truck].name,
+            to: 'Customer',
+            jobName: jobName
+        });
+        
+        await loadInventory();
+        updateDashboard();
+        closePartDetailModal();
+        showProcessing(false);
+        showToast(`Used ${qty}x ${part.name} on ${jobName}!`);
+    } catch (error) {
+        showProcessing(false);
+        console.error('Error:', error);
+        showToast('Error recording usage', 'error');
     }
 }
 
