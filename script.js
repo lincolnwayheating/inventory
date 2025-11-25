@@ -1064,6 +1064,17 @@ function setupEventListeners() {
     document.getElementById('closePartModal')?.addEventListener('click', closePartModal);
     document.getElementById('closePartDetailModal')?.addEventListener('click', closePartDetailModal);
     document.getElementById('closeBarcodeScannerModal')?.addEventListener('click', stopCameraBarcodeScanner);
+    
+    // Click outside modal to close (click on backdrop)
+    document.getElementById('partModal')?.addEventListener('click', function(e) {
+        if (e.target === this) closePartModal();
+    });
+    document.getElementById('partDetailModal')?.addEventListener('click', function(e) {
+        if (e.target === this) closePartDetailModal();
+    });
+    document.getElementById('barcodeScannerModal')?.addEventListener('click', function(e) {
+        if (e.target === this) stopCameraBarcodeScanner();
+    });
 }
 
 function populateDropdowns() {
