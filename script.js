@@ -615,9 +615,9 @@ async function refreshQuantitiesOnly() {
                 updateDashboardQuantitiesOnly();
             } else if (tabId === 'all-parts') {
                 updatePartsGridQuantitiesOnly();
-            } else if (tabId === 'quick-load') {
-                updateQuickLoadList();
             }
+            // NOTE: Quick Load page is NOT auto-refreshed to preserve user selections
+            // Users can manually refresh or switch tabs to get updated data
         }
         
     } catch (error) {
