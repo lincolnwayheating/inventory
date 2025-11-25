@@ -1689,17 +1689,36 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
         
         rootCategories.forEach(catId => {
             const cat = categories[catId];
-         const allParts = getPartsInExactCategory(catId);
+            const allParts = getPartsInExactCategory(catId);
             const availableParts = allParts.filter(partId => parts.includes(partId));
             const partCount = availableParts.length;
             const totalParts = allParts.length;
             const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
             const icon = subcatCount > 0 ? '📁' : '📦';
             
+            // *** FIXED: Handle category image ***
+            let imageHTML = '';
+            let showIcon = true;
+            
+            if (cat.imageUrl && typeof cat.imageUrl === 'string' && cat.imageUrl.trim() !== '') {
+                let imageUrl = cat.imageUrl;
+                if (imageUrl.includes('drive.google.com')) {
+                    const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+                    if (fileIdMatch) {
+                        const fileId = fileIdMatch[1] || fileIdMatch[2];
+                        imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`;
+                    }
+                }
+                imageHTML = `<img src="${imageUrl}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 8px 8px 0 0; margin-bottom: 10px;" loading="lazy">`;
+                showIcon = false;
+            }
+            // *** END FIX ***
+            
             const card = document.createElement('div');
             card.className = 'category-nav-card';
             card.innerHTML = `
-                <div class="category-icon">${icon}</div>
+                ${imageHTML}
+                ${showIcon ? `<div class="category-icon">${icon}</div>` : ''}
                 <div class="category-name">${cat.name}</div>
                 <div class="category-count">${partCount > 0 ? `${partCount} available` : `${totalParts} parts (none available)`}${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
             `;
@@ -1739,18 +1758,37 @@ if (part.imageUrl && part.imageUrl.trim() !== '') {
             categoryGrid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; padding: 15px; border-bottom: 2px solid #e0e0e0; margin-bottom: 15px;';
             
             subcategories.forEach(catId => {
-    const cat = categories[catId];
-    const totalParts = getPartsInExactCategory(catId).length;
-    const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
-    const icon = subcatCount > 0 ? '📁' : '📦';
-    
-    const card = document.createElement('div');
-    card.className = 'category-nav-card';
-    card.innerHTML = `
-        <div class="category-icon">${icon}</div>
-        <div class="category-name">${cat.name}</div>
-        <div class="category-count">${totalParts} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
-    `;
+                const cat = categories[catId];
+                const totalParts = getPartsInExactCategory(catId).length;
+                const subcatCount = Object.keys(categories).filter(id => categories[id].parent === catId).length;
+                const icon = subcatCount > 0 ? '📁' : '📦';
+                
+                // *** FIXED: Handle category image ***
+                let imageHTML = '';
+                let showIcon = true;
+                
+                if (cat.imageUrl && typeof cat.imageUrl === 'string' && cat.imageUrl.trim() !== '') {
+                    let imageUrl = cat.imageUrl;
+                    if (imageUrl.includes('drive.google.com')) {
+                        const fileIdMatch = imageUrl.match(/\/d\/([a-zA-Z0-9_-]+)|[?&]id=([a-zA-Z0-9_-]+)/);
+                        if (fileIdMatch) {
+                            const fileId = fileIdMatch[1] || fileIdMatch[2];
+                            imageUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w400`;
+                        }
+                    }
+                    imageHTML = `<img src="${imageUrl}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 8px 8px 0 0; margin-bottom: 10px;" loading="lazy">`;
+                    showIcon = false;
+                }
+                // *** END FIX ***
+                
+                const card = document.createElement('div');
+                card.className = 'category-nav-card';
+                card.innerHTML = `
+                    ${imageHTML}
+                    ${showIcon ? `<div class="category-icon">${icon}</div>` : ''}
+                    <div class="category-name">${cat.name}</div>
+                    <div class="category-count">${totalParts} parts${subcatCount > 0 ? ` • ${subcatCount} subcategories` : ''}</div>
+                `;
                 card.onclick = () => {
                     currentBrowsingCategory = catId;
                     renderPartModalList();
