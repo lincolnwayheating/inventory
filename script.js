@@ -1,7 +1,7 @@
 // ============================================
-// HVAC INVENTORY - COMPLETE v4 - WITH LOCATION TRACKING
-// Speed improvements: parallel loading, caching, auto-refresh
-// Location: Address reverse geocoding + Lat/Lon
+// HVAC INVENTORY - COMPLETE v5 - SPEED OPTIMIZED
+// Speed improvements: lazy loading, user caching, local updates,
+// background transaction logging with retry queue
 // ============================================
 
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwQ16GPuzCPNXs9sSs16Bi4Ys3-JsMNyyHoXibRJ9uGirPE5J15b_DvSZ-RDGM_j1k/exec';
@@ -12,6 +12,7 @@ let users = {};
 let categories = {};
 let trucks = {};
 let history = [];
+let historyLoaded = false; // Track if history has been loaded
 let settings = {};
 let currentUser = null;
 let currentUserPin = null;
@@ -50,8 +51,80 @@ let currentBrowsingCategory = null;
 
 // Cache management
 const CACHE_DURATION = 24 * 60 * 60 * 1000;
+const USER_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes for user list
 const AUTO_REFRESH_INTERVAL = 60 * 1000;
 let autoRefreshTimer = null;
+
+// ============================================
+// TRANSACTION QUEUE (for background logging)
+// ============================================
+
+const TRANSACTION_QUEUE_KEY = 'hvac_transaction_queue';
+
+function getTransactionQueue() {
+    try {
+        const queue = localStorage.getItem(TRANSACTION_QUEUE_KEY);
+        return queue ? JSON.parse(queue) : [];
+    } catch (error) {
+        console.error('Error reading transaction queue:', error);
+        return [];
+    }
+}
+
+function saveTransactionQueue(queue) {
+    try {
+        localStorage.setItem(TRANSACTION_QUEUE_KEY, JSON.stringify(queue));
+    } catch (error) {
+        console.error('Error saving transaction queue:', error);
+    }
+}
+
+function addToTransactionQueue(transaction) {
+    const queue = getTransactionQueue();
+    queue.push({
+        transaction: transaction,
+        attempts: 0,
+        addedAt: Date.now()
+    });
+    saveTransactionQueue(queue);
+}
+
+async function processTransactionQueue() {
+    const queue = getTransactionQueue();
+    if (queue.length === 0) return;
+    
+    const remainingQueue = [];
+    
+    for (const item of queue) {
+        try {
+            const response = await fetch(SCRIPT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: JSON.stringify({
+                    action: 'addTransaction',
+                    transaction: item.transaction
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error('Server error');
+            }
+            
+            // Success - don't add back to queue
+            console.log('✓ Queued transaction synced:', item.transaction.action);
+        } catch (error) {
+            item.attempts++;
+            // Keep trying for 24 hours (max 50 attempts)
+            if (item.attempts < 50 && (Date.now() - item.addedAt) < 24 * 60 * 60 * 1000) {
+                remainingQueue.push(item);
+            } else {
+                console.error('Transaction permanently failed after retries:', item.transaction);
+            }
+        }
+    }
+    
+    saveTransactionQueue(remainingQueue);
+}
 
 // ============================================
 // LOCATION TRACKING
@@ -107,7 +180,6 @@ async function getCurrentLocation() {
 
 async function reverseGeocode(lat, lon) {
     try {
-        // Using Nominatim (OpenStreetMap) for free reverse geocoding
         const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`, {
             headers: {
                 'User-Agent': 'HVAC-Inventory-App'
@@ -124,7 +196,6 @@ async function reverseGeocode(lat, lon) {
             return data.display_name;
         }
         
-        // Fallback to simple coordinates
         return `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
     } catch (error) {
         console.warn('Reverse geocoding error:', error);
@@ -152,7 +223,10 @@ function getCachedData(key) {
         const data = JSON.parse(cached);
         const now = Date.now();
         
-        if (now - data.timestamp > CACHE_DURATION) {
+        // Use specific duration for user cache
+        const duration = key === 'cache_users' ? USER_CACHE_DURATION : CACHE_DURATION;
+        
+        if (now - data.timestamp > duration) {
             localStorage.removeItem(key);
             return null;
         }
@@ -177,7 +251,7 @@ function setCachedData(key, value) {
 }
 
 function clearCache() {
-    const keys = ['cache_categories', 'cache_trucks', 'cache_settings', 'cache_part_details'];
+    const keys = ['cache_categories', 'cache_trucks', 'cache_settings', 'cache_part_details', 'cache_users'];
     keys.forEach(key => localStorage.removeItem(key));
 }
 
@@ -221,6 +295,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('visibilitychange', function() {
         if (!document.hidden && currentUser) {
             refreshQuantitiesOnly();
+            // Try to sync any pending transactions
+            processTransactionQueue();
         }
     });
     
@@ -249,7 +325,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 // ============================================
-// AUTHENTICATION
+// AUTHENTICATION (with user caching)
 // ============================================
 
 async function login() {
@@ -274,73 +350,84 @@ async function login() {
     showProcessing(true);
     
     try {
-        const response = await fetch(SCRIPT_URL + '?action=readUsers');
-        const result = await response.json();
+        // Try cached users first
+        let cachedUsers = getCachedData('cache_users');
         
-        if (result.success && result.data) {
-            users = {};
-            for (let i = 1; i < result.data.length; i++) {
-                const row = result.data[i];
-                if (row[0]) {
-                    users[row[0]] = {
-                        name: row[1],
-                        truck: row[2],
-                        isOwner: (row[3] === 'TRUE' || row[3] === true),
-                        canEditPIN: (row[4] === 'TRUE' || row[4] === true)
-                    };
+        if (!cachedUsers) {
+            const response = await fetch(SCRIPT_URL + '?action=readUsers');
+            const result = await response.json();
+            
+            if (result.success && result.data) {
+                cachedUsers = {};
+                for (let i = 1; i < result.data.length; i++) {
+                    const row = result.data[i];
+                    if (row[0]) {
+                        cachedUsers[row[0]] = {
+                            name: row[1],
+                            truck: row[2],
+                            isOwner: (row[3] === 'TRUE' || row[3] === true),
+                            canEditPIN: (row[4] === 'TRUE' || row[4] === true)
+                        };
+                    }
                 }
+                setCachedData('cache_users', cachedUsers);
+            }
+        }
+        
+        users = cachedUsers || {};
+        const user = users[pin];
+        
+        if (user) {
+            loginAttempts = 0;
+            lockoutUntil = 0;
+            localStorage.setItem('loginAttempts', '0');
+            localStorage.setItem('lockoutUntil', '0');
+            
+            currentUser = user.name;
+            currentUserPin = pin;
+            isOwner = user.isOwner;
+            userTruck = user.truck;
+            canEditPIN = user.canEditPIN;
+            
+            // Request location permission (parallel, don't wait)
+            requestLocationPermission();
+            
+            // Log login in background (don't wait)
+            logLoginHistory(user.name, pin, 'Login', 'User logged in');
+            
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('appContainer').style.display = 'block';
+            document.getElementById('userBadge').textContent = user.name + (user.isOwner ? ' 👑' : '');
+            
+            await init();
+        } else {
+            showProcessing(false);
+            loginAttempts++;
+            localStorage.setItem('loginAttempts', loginAttempts.toString());
+            
+            // Clear user cache on failed login (might be stale)
+            localStorage.removeItem('cache_users');
+            
+            if (loginAttempts >= LOCKOUT_TIMES.length) {
+                loginAttempts = LOCKOUT_TIMES.length - 1;
             }
             
-            const user = users[pin];
+            const lockoutTime = LOCKOUT_TIMES[loginAttempts];
             
-            if (user) {
-                loginAttempts = 0;
-                lockoutUntil = 0;
-                localStorage.setItem('loginAttempts', '0');
-                localStorage.setItem('lockoutUntil', '0');
-                
-                currentUser = user.name;
-                currentUserPin = pin;
-                isOwner = user.isOwner;
-                userTruck = user.truck;
-                canEditPIN = user.canEditPIN;
-                
-                // Request location permission
-                await requestLocationPermission();
-                
-                await logLoginHistory(user.name, pin, 'Login', 'User logged in');
-                
-                document.getElementById('loginScreen').style.display = 'none';
-                document.getElementById('appContainer').style.display = 'block';
-                document.getElementById('userBadge').textContent = user.name + (user.isOwner ? ' 👑' : '');
-                
-                await init();
+            if (lockoutTime > 0) {
+                lockoutUntil = Date.now() + lockoutTime;
+                localStorage.setItem('lockoutUntil', lockoutUntil.toString());
+                const minutes = Math.floor(lockoutTime / 60000);
+                showToast(`Too many attempts. Locked out for ${minutes} minute${minutes !== 1 ? 's' : ''}.`, 'error');
             } else {
-                showProcessing(false);
-                loginAttempts++;
-                localStorage.setItem('loginAttempts', loginAttempts.toString());
-                
-                if (loginAttempts >= LOCKOUT_TIMES.length) {
-                    loginAttempts = LOCKOUT_TIMES.length - 1;
-                }
-                
-                const lockoutTime = LOCKOUT_TIMES[loginAttempts];
-                
-                if (lockoutTime > 0) {
-                    lockoutUntil = Date.now() + lockoutTime;
-                    localStorage.setItem('lockoutUntil', lockoutUntil.toString());
-                    const minutes = Math.floor(lockoutTime / 60000);
-                    showToast(`Too many attempts. Locked out for ${minutes} minute${minutes !== 1 ? 's' : ''}.`, 'error');
-                } else {
-                    const attemptsLeft = 5 - loginAttempts;
-                    showToast(`Invalid PIN. ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining.`, 'error');
-                }
-                
-                document.getElementById('pinInput').value = '';
-                setTimeout(() => {
-                    document.getElementById('pinInput').focus();
-                }, 100);
+                const attemptsLeft = 5 - loginAttempts;
+                showToast(`Invalid PIN. ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining.`, 'error');
             }
+            
+            document.getElementById('pinInput').value = '';
+            setTimeout(() => {
+                document.getElementById('pinInput').focus();
+            }, 100);
         }
     } catch (error) {
         showProcessing(false);
@@ -362,6 +449,8 @@ function logout() {
         userTruck = null;
         canEditPIN = false;
         lastKnownLocation = null;
+        historyLoaded = false;
+        history = [];
         document.getElementById('pinInput').value = '';
         document.getElementById('loginScreen').style.display = 'flex';
         document.getElementById('appContainer').style.display = 'none';
@@ -373,7 +462,7 @@ function logout() {
 }
 
 // ============================================
-// Optimized init with parallel loading and caching
+// Optimized init - NO history loading
 // ============================================
 
 async function init() {
@@ -382,7 +471,7 @@ async function init() {
     try {
         await loadStaticData();
         await loadInventoryQuantities();
-        await loadHistory();
+        // History NOT loaded here - lazy loaded when tab clicked
         
         buildTabs();
         setupEventListeners();
@@ -390,6 +479,9 @@ async function init() {
         updateDashboard();
         
         startAutoRefresh();
+        
+        // Process any pending transactions from queue
+        processTransactionQueue();
         
         showProcessing(false);
     } catch (error) {
@@ -617,7 +709,6 @@ async function refreshQuantitiesOnly() {
                 updatePartsGridQuantitiesOnly();
             }
             // NOTE: Quick Load page is NOT auto-refreshed to preserve user selections
-            // Users can manually refresh or switch tabs to get updated data
         }
         
     } catch (error) {
@@ -754,6 +845,8 @@ function startAutoRefresh() {
     
     autoRefreshTimer = setInterval(() => {
         refreshQuantitiesOnly();
+        // Also try to process any pending transactions
+        processTransactionQueue();
     }, AUTO_REFRESH_INTERVAL);
 }
 
@@ -762,10 +855,10 @@ async function refreshData() {
     
     try {
         clearCache();
+        historyLoaded = false;
         
         await loadStaticData();
         await loadInventoryQuantities();
-        await loadHistory();
         
         populateDropdowns();
         updateDashboard();
@@ -775,7 +868,10 @@ async function refreshData() {
             const tabId = activeTab.id;
             if (tabId === 'all-parts') renderAllParts();
             if (tabId === 'quick-load') updateQuickLoadList();
-            if (tabId === 'history') updateHistory();
+            if (tabId === 'history') {
+                await loadHistory();
+                updateHistory();
+            }
             if (tabId === 'settings') updateSettings();
             if (tabId === 'categories') renderCategoryTree();
         }
@@ -876,6 +972,8 @@ async function loadInventory() {
 }
 
 async function loadHistory() {
+    if (historyLoaded) return; // Already loaded
+    
     const response = await fetch(SCRIPT_URL + '?action=readHistory');
     const result = await response.json();
     
@@ -898,6 +996,7 @@ async function loadHistory() {
             });
         }
         history.reverse();
+        historyLoaded = true;
     }
 }
 
@@ -905,7 +1004,8 @@ async function logLoginHistory(userName, pin, action, details) {
     try {
         const location = await getCurrentLocation();
         
-        await fetch(SCRIPT_URL, {
+        // Fire and forget - don't await
+        fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
@@ -918,6 +1018,8 @@ async function logLoginHistory(userName, pin, action, details) {
                 lat: location ? location.lat : '',
                 lon: location ? location.lon : ''
             })
+        }).catch(error => {
+            console.error('Login history error:', error);
         });
     } catch (error) {
         console.error('Login history error:', error);
@@ -955,7 +1057,7 @@ function buildTabs() {
     });
 }
 
-function switchTab(tabName) {
+async function switchTab(tabName) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.content').forEach(c => c.classList.remove('active'));
     
@@ -973,7 +1075,15 @@ function switchTab(tabName) {
         if (tabName === 'dashboard') updateDashboard();
         if (tabName === 'all-parts') renderAllParts();
         if (tabName === 'quick-load') updateQuickLoadList();
-        if (tabName === 'history') updateHistory();
+        if (tabName === 'history') {
+            // Lazy load history
+            if (!historyLoaded) {
+                showProcessing(true);
+                await loadHistory();
+                showProcessing(false);
+            }
+            updateHistory();
+        }
         if (tabName === 'settings') updateSettings();
         if (tabName === 'categories') renderCategoryTree();
     }
@@ -1175,7 +1285,7 @@ function renderTruckMinimumsInputs() {
 }
 
 // ============================================
-// QUICK ACTIONS WITH LOCATION TRACKING
+// QUICK ACTIONS - OPTIMIZED WITH LOCAL UPDATES
 // ============================================
 
 async function useParts() {
@@ -1189,21 +1299,19 @@ async function useParts() {
         return;
     }
     
-    showProcessing(true);
-    
-    const location = await getCurrentLocation();
-    
-    await loadInventory();
-    
     const part = inventory[partId];
     if (part[truck] < qty) {
-        showProcessing(false);
         showToast(`Only ${part[truck]} available on truck`, 'error');
         return;
     }
     
+    showProcessing(true);
+    
+    // Get location in parallel with update
+    const locationPromise = getCurrentLocation();
+    
     try {
-        await fetch(SCRIPT_URL, {
+        const response = await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
@@ -1215,7 +1323,14 @@ async function useParts() {
             })
         });
         
-        await addTransaction({
+        if (!response.ok) throw new Error('Update failed');
+        
+        // Update local inventory immediately
+        inventory[partId][truck] = part[truck] - qty;
+        
+        // Log transaction in background (fire and forget with queue)
+        const location = await locationPromise;
+        queueTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Used on Job',
@@ -1229,7 +1344,6 @@ async function useParts() {
             lon: location ? location.lon : ''
         });
         
-        await loadInventory();
         document.getElementById('useQty').value = '1';
         document.getElementById('jobName').value = '';
         clearSelectedPart('use');
@@ -1253,21 +1367,18 @@ async function loadTruck() {
         return;
     }
     
-    showProcessing(true);
-    
-    const location = await getCurrentLocation();
-    
-    await loadInventory();
-    
     const part = inventory[partId];
     if (part.shop < qty) {
-        showProcessing(false);
         showToast(`Only ${part.shop} available in shop`, 'error');
         return;
     }
     
+    showProcessing(true);
+    
+    const locationPromise = getCurrentLocation();
+    
     try {
-        await fetch(SCRIPT_URL, {
+        const response = await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
@@ -1280,7 +1391,14 @@ async function loadTruck() {
             })
         });
         
-        await addTransaction({
+        if (!response.ok) throw new Error('Update failed');
+        
+        // Update local inventory immediately
+        inventory[partId].shop = part.shop - qty;
+        inventory[partId][truck] = part[truck] + qty;
+        
+        const location = await locationPromise;
+        queueTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Loaded Truck',
@@ -1293,7 +1411,6 @@ async function loadTruck() {
             lon: location ? location.lon : ''
         });
         
-        await loadInventory();
         document.getElementById('loadQty').value = '1';
         clearSelectedPart('load');
         updateDashboard();
@@ -1316,21 +1433,18 @@ async function returnToShop() {
         return;
     }
     
-    showProcessing(true);
-    
-    const location = await getCurrentLocation();
-    
-    await loadInventory();
-    
     const part = inventory[partId];
     if (part[truck] < qty) {
-        showProcessing(false);
         showToast(`Only ${part[truck]} available on truck`, 'error');
         return;
     }
     
+    showProcessing(true);
+    
+    const locationPromise = getCurrentLocation();
+    
     try {
-        await fetch(SCRIPT_URL, {
+        const response = await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
@@ -1343,7 +1457,14 @@ async function returnToShop() {
             })
         });
         
-        await addTransaction({
+        if (!response.ok) throw new Error('Update failed');
+        
+        // Update local inventory immediately
+        inventory[partId][truck] = part[truck] - qty;
+        inventory[partId].shop = part.shop + qty;
+        
+        const location = await locationPromise;
+        queueTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Returned to Shop',
@@ -1356,7 +1477,6 @@ async function returnToShop() {
             lon: location ? location.lon : ''
         });
         
-        await loadInventory();
         document.getElementById('returnQty').value = '1';
         clearSelectedPart('return');
         updateDashboard();
@@ -1385,21 +1505,18 @@ async function transferParts() {
         return;
     }
     
-    showProcessing(true);
-    
-    const location = await getCurrentLocation();
-    
-    await loadInventory();
-    
     const part = inventory[partId];
     if (part[fromTruck] < qty) {
-        showProcessing(false);
         showToast(`Only ${part[fromTruck]} available on ${trucks[fromTruck].name}`, 'error');
         return;
     }
     
+    showProcessing(true);
+    
+    const locationPromise = getCurrentLocation();
+    
     try {
-        await fetch(SCRIPT_URL, {
+        const response = await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
@@ -1412,7 +1529,14 @@ async function transferParts() {
             })
         });
         
-        await addTransaction({
+        if (!response.ok) throw new Error('Update failed');
+        
+        // Update local inventory immediately
+        inventory[partId][fromTruck] = part[fromTruck] - qty;
+        inventory[partId][toTruck] = part[toTruck] + qty;
+        
+        const location = await locationPromise;
+        queueTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Transferred',
@@ -1425,7 +1549,6 @@ async function transferParts() {
             lon: location ? location.lon : ''
         });
         
-        await loadInventory();
         document.getElementById('transferQty').value = '1';
         clearSelectedPart('transfer');
         updateDashboard();
@@ -1449,14 +1572,11 @@ async function receiveStock() {
     
     showProcessing(true);
     
-    const location = await getCurrentLocation();
-    
-    await loadInventory();
-    
     const part = inventory[partId];
+    const locationPromise = getCurrentLocation();
     
     try {
-        await fetch(SCRIPT_URL, {
+        const response = await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
@@ -1468,7 +1588,13 @@ async function receiveStock() {
             })
         });
         
-        await addTransaction({
+        if (!response.ok) throw new Error('Update failed');
+        
+        // Update local inventory immediately
+        inventory[partId].shop = part.shop + qty;
+        
+        const location = await locationPromise;
+        queueTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Received Stock',
@@ -1481,7 +1607,6 @@ async function receiveStock() {
             lon: location ? location.lon : ''
         });
         
-        await loadInventory();
         document.getElementById('receiveQty').value = '1';
         clearSelectedPart('receive');
         updateDashboard();
@@ -1495,7 +1620,7 @@ async function receiveStock() {
 }
 
 // ============================================
-// PART DETAIL MODAL QUICK ACTIONS
+// PART DETAIL MODAL QUICK ACTIONS - OPTIMIZED
 // ============================================
 
 async function quickReceive(partId) {
@@ -1504,13 +1629,11 @@ async function quickReceive(partId) {
     
     showProcessing(true);
     
-    const location = await getCurrentLocation();
-    
-    await loadInventory();
     const part = inventory[partId];
+    const locationPromise = getCurrentLocation();
     
     try {
-        await fetch(SCRIPT_URL, {
+        const response = await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
@@ -1522,7 +1645,13 @@ async function quickReceive(partId) {
             })
         });
         
-        await addTransaction({
+        if (!response.ok) throw new Error('Update failed');
+        
+        // Update local inventory immediately
+        inventory[partId].shop = part.shop + parseInt(qty);
+        
+        const location = await locationPromise;
+        queueTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Received Stock',
@@ -1535,7 +1664,6 @@ async function quickReceive(partId) {
             lon: location ? location.lon : ''
         });
         
-        await loadInventory();
         updateDashboard();
         closePartDetailModal();
         showProcessing(false);
@@ -1551,21 +1679,19 @@ async function quickLoadToTruck(partId, truckId) {
     const qty = prompt(`Enter quantity to load onto ${trucks[truckId].name}:`);
     if (!qty || isNaN(qty) || parseInt(qty) <= 0) return;
     
-    showProcessing(true);
-    
-    const location = await getCurrentLocation();
-    
-    await loadInventory();
     const part = inventory[partId];
     
     if (part.shop < parseInt(qty)) {
-        showProcessing(false);
         showToast(`Only ${part.shop} available in shop`, 'error');
         return;
     }
     
+    showProcessing(true);
+    
+    const locationPromise = getCurrentLocation();
+    
     try {
-        await fetch(SCRIPT_URL, {
+        const response = await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
@@ -1578,7 +1704,14 @@ async function quickLoadToTruck(partId, truckId) {
             })
         });
         
-        await addTransaction({
+        if (!response.ok) throw new Error('Update failed');
+        
+        // Update local inventory immediately
+        inventory[partId].shop = part.shop - parseInt(qty);
+        inventory[partId][truckId] = part[truckId] + parseInt(qty);
+        
+        const location = await locationPromise;
+        queueTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Loaded Truck',
@@ -1591,7 +1724,6 @@ async function quickLoadToTruck(partId, truckId) {
             lon: location ? location.lon : ''
         });
         
-        await loadInventory();
         updateDashboard();
         closePartDetailModal();
         showProcessing(false);
@@ -1613,21 +1745,18 @@ async function quickUseOnJob(partId) {
         return;
     }
     
-    showProcessing(true);
-    
-    const location = await getCurrentLocation();
-    
-    await loadInventory();
-    
     const part = inventory[partId];
     if (part[truck] < qty) {
-        showProcessing(false);
         showToast(`Only ${part[truck]} available on ${trucks[truck].name}`, 'error');
         return;
     }
     
+    showProcessing(true);
+    
+    const locationPromise = getCurrentLocation();
+    
     try {
-        await fetch(SCRIPT_URL, {
+        const response = await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
@@ -1639,7 +1768,13 @@ async function quickUseOnJob(partId) {
             })
         });
         
-        await addTransaction({
+        if (!response.ok) throw new Error('Update failed');
+        
+        // Update local inventory immediately
+        inventory[partId][truck] = part[truck] - qty;
+        
+        const location = await locationPromise;
+        queueTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Used on Job',
@@ -1653,7 +1788,6 @@ async function quickUseOnJob(partId) {
             lon: location ? location.lon : ''
         });
         
-        await loadInventory();
         updateDashboard();
         closePartDetailModal();
         showProcessing(false);
@@ -1666,26 +1800,36 @@ async function quickUseOnJob(partId) {
 }
 
 // ============================================
-// TRANSACTION LOGGING
+// TRANSACTION LOGGING - FIRE AND FORGET WITH QUEUE
 // ============================================
 
+function queueTransaction(transaction) {
+    // Try to send immediately
+    fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({
+            action: 'addTransaction',
+            transaction: transaction
+        })
+    }).then(response => {
+        if (!response.ok) {
+            throw new Error('Failed to log transaction');
+        }
+        console.log('✓ Transaction logged:', transaction.action);
+    }).catch(error => {
+        console.warn('Transaction failed, queuing for retry:', error);
+        addToTransactionQueue(transaction);
+    });
+}
+
+// Keep old function name for compatibility
 async function addTransaction(transaction) {
-    try {
-        await fetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'addTransaction',
-                transaction: transaction
-            })
-        });
-    } catch (error) {
-        console.error('Transaction log error:', error);
-    }
+    queueTransaction(transaction);
 }
 
 // ============================================
-// ADD PART WITH LOCATION
+// ADD PART WITH LOCATION - OPTIMIZED
 // ============================================
 
 async function addPart() {
@@ -1712,7 +1856,7 @@ async function addPart() {
     
     showProcessing(true);
     
-    const location = await getCurrentLocation();
+    const locationPromise = getCurrentLocation();
     
     const newPart = {
         partNumber: partNumber,
@@ -1737,7 +1881,7 @@ async function addPart() {
     });
     
     try {
-        await fetch(SCRIPT_URL, {
+        const response = await fetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({
@@ -1746,7 +1890,28 @@ async function addPart() {
             })
         });
         
-        await addTransaction({
+        if (!response.ok) throw new Error('Failed to add part');
+        
+        // Add to local inventory immediately
+        inventory[partNumber] = {
+            id: partNumber,
+            name: name,
+            category: categoryId,
+            barcode: barcode,
+            imageUrl: imageUrl,
+            season: season,
+            shop: shopQty,
+            minStock: minStock,
+            price: price,
+            purchaseLink: link
+        };
+        Object.keys(trucks).forEach(truckId => {
+            inventory[partNumber][truckId] = 0;
+            inventory[partNumber]['minTruck_' + truckId] = newPart['minTruck_' + truckId];
+        });
+        
+        const location = await locationPromise;
+        queueTransaction({
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Added Part',
@@ -1758,8 +1923,6 @@ async function addPart() {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
-        
-        await loadInventory();
         
         document.getElementById('partNumber').value = '';
         document.getElementById('partName').value = '';
@@ -2580,24 +2743,27 @@ function openPartDetail(partId) {
     if (part.price > 0) infoHTML += `<p><strong>Price:</strong> $${part.price.toFixed(2)}</p>`;
     if (part.purchaseLink) infoHTML += `<p><strong>Purchase:</strong> <a href="${part.purchaseLink}" target="_blank">Link</a></p>`;
     
-    const partHistory = history.filter(h => h.details && h.details.includes(part.name)).slice(0, 10);
-    if (partHistory.length > 0) {
-        infoHTML += '<h3 style="margin-top: 20px;">Recent History</h3>';
-        partHistory.forEach(h => {
-            let locationHTML = '';
-            if (h.address) {
-                locationHTML = `<br><small style="color: #666;">📍 ${h.address}</small>`;
-            }
-            
-            infoHTML += `
-                <div class="history-item" style="margin-bottom: 8px;">
-                    <strong>${h.action}</strong> - ${h.details}
-                    <span class="tech-badge">${h.tech}</span><br>
-                    <small style="color: #666;">📅 ${h.timestamp}</small>
-                    ${locationHTML}
-                </div>
-            `;
-        });
+    // Only show history if loaded
+    if (historyLoaded) {
+        const partHistory = history.filter(h => h.details && h.details.includes(part.name)).slice(0, 10);
+        if (partHistory.length > 0) {
+            infoHTML += '<h3 style="margin-top: 20px;">Recent History</h3>';
+            partHistory.forEach(h => {
+                let locationHTML = '';
+                if (h.address) {
+                    locationHTML = `<br><small style="color: #666;">📍 ${h.address}</small>`;
+                }
+                
+                infoHTML += `
+                    <div class="history-item" style="margin-bottom: 8px;">
+                        <strong>${h.action}</strong> - ${h.details}
+                        <span class="tech-badge">${h.tech}</span><br>
+                        <small style="color: #666;">📅 ${h.timestamp}</small>
+                        ${locationHTML}
+                    </div>
+                `;
+            });
+        }
     }
     
     body.innerHTML = imageHTML + stockHTML + actionsHTML + useOnJobHTML + infoHTML;
@@ -2941,6 +3107,9 @@ async function changePIN() {
     showProcessing(true);
     
     try {
+        // Clear user cache to force fresh check
+        localStorage.removeItem('cache_users');
+        
         await fetch(SCRIPT_URL + '?action=readUsers').then(r => r.json()).then(result => {
             if (result.success && result.data) {
                 for (let i = 1; i < result.data.length; i++) {
@@ -3134,6 +3303,9 @@ async function addUser() {
             })
         });
         
+        // Clear user cache
+        localStorage.removeItem('cache_users');
+        
         const response = await fetch(SCRIPT_URL + '?action=readUsers');
         const result = await response.json();
         if (result.success && result.data) {
@@ -3149,6 +3321,7 @@ async function addUser() {
                     };
                 }
             }
+            setCachedData('cache_users', users);
         }
         
         document.getElementById('newUserName').value = '';
@@ -3178,6 +3351,7 @@ async function deleteUser(pin) {
         });
         
         delete users[pin];
+        localStorage.removeItem('cache_users');
         updateSettings();
         showProcessing(false);
         showToast('User deleted!');
@@ -3188,7 +3362,7 @@ async function deleteUser(pin) {
 }
 
 // ============================================
-// QUICK LOAD (remaining functions - add these if missing)
+// QUICK LOAD - OPTIMIZED
 // ============================================
 
 async function updateQuickLoadList() {
@@ -3288,8 +3462,6 @@ async function processQuickLoad() {
     
     const gpsLocation = await getCurrentLocation();
     
-    await loadInventory();
-    
     try {
         for (const checkbox of checkboxes) {
             const partId = checkbox.getAttribute('data-part-id');
@@ -3301,7 +3473,7 @@ async function processQuickLoad() {
             const part = inventory[partId];
             
             if (location === 'shop') {
-                await fetch(SCRIPT_URL, {
+                const response = await fetch(SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain' },
                     body: JSON.stringify({
@@ -3311,7 +3483,12 @@ async function processQuickLoad() {
                     })
                 });
                 
-                await addTransaction({
+                if (!response.ok) throw new Error('Update failed');
+                
+                // Update local inventory
+                inventory[partId].shop = part.shop + qty;
+                
+                queueTransaction({
                     timestamp: new Date().toLocaleString(),
                     tech: currentUser,
                     action: 'Restocked Shop',
@@ -3326,7 +3503,7 @@ async function processQuickLoad() {
             } else {
                 if (part.shop < qty) continue;
                 
-                await fetch(SCRIPT_URL, {
+                const response = await fetch(SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain' },
                     body: JSON.stringify({
@@ -3339,7 +3516,13 @@ async function processQuickLoad() {
                     })
                 });
                 
-                await addTransaction({
+                if (!response.ok) throw new Error('Update failed');
+                
+                // Update local inventory
+                inventory[partId].shop = part.shop - qty;
+                inventory[partId][location] = part[location] + qty;
+                
+                queueTransaction({
                     timestamp: new Date().toLocaleString(),
                     tech: currentUser,
                     action: 'Quick Load',
@@ -3354,7 +3537,6 @@ async function processQuickLoad() {
             }
         }
         
-        await loadInventory();
         updateDashboard();
         await updateQuickLoadList();
         showProcessing(false);
