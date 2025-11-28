@@ -610,11 +610,13 @@ async function loadInventoryQuantities() {
                         }
                     });
                     
-                    // Use header names for Price, PurchaseLink, Season columns
+                    // Use header names for PretaxPrice, Price, PurchaseLink, Season columns
+                    const pretaxPriceIndex = headers.indexOf('PretaxPrice');
                     const priceIndex = headers.indexOf('Price');
                     const purchaseLinkIndex = headers.indexOf('PurchaseLink');
                     const seasonIndex = headers.indexOf('Season');
                     
+                    item.pretaxPrice = pretaxPriceIndex !== -1 ? (parseFloat(row[pretaxPriceIndex]) || 0) : 0;
                     item.price = priceIndex !== -1 ? (parseFloat(row[priceIndex]) || 0) : 0;
                     item.purchaseLink = purchaseLinkIndex !== -1 ? (row[purchaseLinkIndex] || '') : '';
                     item.season = seasonIndex !== -1 ? (row[seasonIndex] || 'year-round') : 'year-round';
@@ -1898,6 +1900,7 @@ async function addPart() {
         if (!response.ok) throw new Error('Failed to add part');
         
         // Add to local inventory immediately
+        const taxRate = parseFloat(settings.TaxRate) || 9;
         inventory[partNumber] = {
             id: partNumber,
             name: name,
@@ -1907,7 +1910,8 @@ async function addPart() {
             season: season,
             shop: shopQty,
             minStock: minStock,
-            price: price,
+            pretaxPrice: price,
+            price: price * (1 + taxRate / 100),
             purchaseLink: link
         };
         Object.keys(trucks).forEach(truckId => {
@@ -2745,7 +2749,11 @@ function openPartDetail(partId) {
     infoHTML += `<p><strong>Category:</strong> ${categories[part.category]?.name || 'N/A'}</p>`;
     infoHTML += `<p><strong>Barcode:</strong> ${part.barcode || 'N/A'}</p>`;
     infoHTML += `<p><strong>Season:</strong> ${part.season}</p>`;
-    if (part.price > 0) infoHTML += `<p><strong>Price:</strong> $${part.price.toFixed(2)}</p>`;
+    if (part.price > 0 || part.pretaxPrice > 0) {
+        const taxRate = parseFloat(settings.TaxRate) || 9;
+        infoHTML += `<p><strong>Cost (Pre-tax):</strong> $${(part.pretaxPrice || 0).toFixed(2)}</p>`;
+        infoHTML += `<p><strong>Cost (w/ ${taxRate}% tax):</strong> $${(part.price || 0).toFixed(2)}</p>`;
+    }
     if (part.purchaseLink) infoHTML += `<p><strong>Purchase:</strong> <a href="${part.purchaseLink}" target="_blank">Link</a></p>`;
     
     // Only show history if loaded
