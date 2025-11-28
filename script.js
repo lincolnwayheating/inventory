@@ -2750,9 +2750,8 @@ function openPartDetail(partId) {
     infoHTML += `<p><strong>Barcode:</strong> ${part.barcode || 'N/A'}</p>`;
     infoHTML += `<p><strong>Season:</strong> ${part.season}</p>`;
     if (part.price > 0 || part.pretaxPrice > 0) {
-        const taxRate = parseFloat(settings.TaxRate) || 9;
         infoHTML += `<p><strong>Cost (Pre-tax):</strong> $${(part.pretaxPrice || 0).toFixed(2)}</p>`;
-        infoHTML += `<p><strong>Cost (w/ ${taxRate}% tax):</strong> $${(part.price || 0).toFixed(2)}</p>`;
+        infoHTML += `<p><strong>Cost (w/ tax):</strong> $${(part.price || 0).toFixed(2)}</p>`;
     }
     if (part.purchaseLink) infoHTML += `<p><strong>Purchase:</strong> <a href="${part.purchaseLink}" target="_blank">Link</a></p>`;
     
