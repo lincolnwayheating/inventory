@@ -610,9 +610,14 @@ async function loadInventoryQuantities() {
                         }
                     });
                     
-                    item.price = parseFloat(row[minStockIndex + Object.keys(trucks).length + 1]) || 0;
-                    item.purchaseLink = row[minStockIndex + Object.keys(trucks).length + 2] || '';
-                    item.season = row[minStockIndex + Object.keys(trucks).length + 3] || 'year-round';
+                    // Use header names for Price, PurchaseLink, Season columns
+                    const priceIndex = headers.indexOf('Price');
+                    const purchaseLinkIndex = headers.indexOf('PurchaseLink');
+                    const seasonIndex = headers.indexOf('Season');
+                    
+                    item.price = priceIndex !== -1 ? (parseFloat(row[priceIndex]) || 0) : 0;
+                    item.purchaseLink = purchaseLinkIndex !== -1 ? (row[purchaseLinkIndex] || '') : '';
+                    item.season = seasonIndex !== -1 ? (row[seasonIndex] || 'year-round') : 'year-round';
                 }
                 
                 inventory[partId] = item;
