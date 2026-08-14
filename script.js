@@ -23,7 +23,7 @@ let canEditPIN = false;
 function canViewLocation(id) {
     const location = trucks[id];
     if (!location || !location.active) return false;
-    const allowed = location.visibleTo || 'all';
+    const allowed = location.visibleTo || (id === 'trevorshouse' ? 'Ben,Trevor' : 'all');
     return allowed.toLowerCase() === 'all' || allowed.split(',').map(name => name.trim().toLowerCase()).includes((currentUser || '').toLowerCase());
 }
 
@@ -567,7 +567,7 @@ async function loadStaticData() {
                 trucks[row[0]] = {
                     name: row[1],
                     active: (row[2] === 'TRUE' || row[2] === true),
-                    type: row[3] || 'vehicle',
+                    type: row[3] || (row[0] === 'trevorshouse' ? 'storage' : 'vehicle'),
                     visibleTo: row[4] || 'all'
                 };
             }
@@ -980,7 +980,7 @@ async function loadTrucks() {
                 trucks[row[0]] = {
                     name: row[1],
                     active: (row[2] === 'TRUE' || row[2] === true),
-                    type: row[3] || 'vehicle',
+                    type: row[3] || (row[0] === 'trevorshouse' ? 'storage' : 'vehicle'),
                     visibleTo: row[4] || 'all'
                 };
             }
