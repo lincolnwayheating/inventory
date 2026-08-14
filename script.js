@@ -509,7 +509,7 @@ async function init() {
 async function loadStaticData() {
     const cachedSettings = getCachedData('cache_settings');
     const cachedCategories = getCachedData('cache_categories');
-    const cachedTrucks = getCachedData('cache_locations_v2');
+    const cachedTrucks = getCachedData('cache_locations_v3');
     
     if (cachedSettings && cachedCategories && cachedTrucks) {
         settings = cachedSettings;
@@ -568,11 +568,11 @@ async function loadStaticData() {
                     name: row[1],
                     active: (row[2] === 'TRUE' || row[2] === true),
                     type: row[3] || (row[0] === 'trevorshouse' ? 'storage' : 'vehicle'),
-                    visibleTo: row[4] || 'all'
+                    visibleTo: row[4] || (row[0] === 'trevorshouse' ? 'Ben,Trevor' : 'all')
                 };
             }
         }
-        setCachedData('cache_locations_v2', trucks);
+        setCachedData('cache_locations_v3', trucks);
     }
 }
 
@@ -963,7 +963,7 @@ async function loadCategories() {
 }
 
 async function loadTrucks() {
-    const cached = getCachedData('cache_locations_v2');
+    const cached = getCachedData('cache_locations_v3');
     if (cached) {
         trucks = cached;
         return;
@@ -981,11 +981,11 @@ async function loadTrucks() {
                     name: row[1],
                     active: (row[2] === 'TRUE' || row[2] === true),
                     type: row[3] || (row[0] === 'trevorshouse' ? 'storage' : 'vehicle'),
-                    visibleTo: row[4] || 'all'
+                    visibleTo: row[4] || (row[0] === 'trevorshouse' ? 'Ben,Trevor' : 'all')
                 };
             }
         }
-        setCachedData('cache_locations_v2', trucks);
+        setCachedData('cache_locations_v3', trucks);
     }
 }
 
