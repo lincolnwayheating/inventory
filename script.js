@@ -20,6 +20,17 @@ let isOwner = false;
 let userTruck = null;
 let canEditPIN = false;
 
+function canViewLocation(id) {
+    const location = trucks[id];
+    if (!location || !location.active) return false;
+    const allowed = location.visibleTo || 'all';
+    return allowed.toLowerCase() === 'all' || allowed.split(',').map(name => name.trim().toLowerCase()).includes((currentUser || '').toLowerCase());
+}
+
+function visibleLocationIds() { return Object.keys(trucks).filter(canViewLocation); }
+function visibleVehicleIds() { return visibleLocationIds().filter(id => trucks[id].type !== 'storage'); }
+function locationIcon(id) { return trucks[id]?.type === 'storage' ? '🏠' : '🚚'; }
+
 // Selected parts
 let selectedParts = {
     load: null,
@@ -498,7 +509,7 @@ async function init() {
 async function loadStaticData() {
     const cachedSettings = getCachedData('cache_settings');
     const cachedCategories = getCachedData('cache_categories');
-    const cachedTrucks = getCachedData('cache_trucks');
+    const cachedTrucks = getCachedData('cache_locations_v2');
     
     if (cachedSettings && cachedCategories && cachedTrucks) {
         settings = cachedSettings;
@@ -555,11 +566,13 @@ async function loadStaticData() {
             if (row[0]) {
                 trucks[row[0]] = {
                     name: row[1],
-                    active: (row[2] === 'TRUE' || row[2] === true)
+                    active: (row[2] === 'TRUE' || row[2] === true),
+                    type: row[3] || 'vehicle',
+                    visibleTo: row[4] || 'all'
                 };
             }
         }
-        setCachedData('cache_trucks', trucks);
+        setCachedData('cache_locations_v2', trucks);
     }
 }
 
@@ -829,7 +842,7 @@ function getLowStockCount() {
         }).length;
     }
     
-    Object.keys(trucks).filter(id => trucks[id].active && id !== userTruck).forEach(truckId => {
+    visibleLocationIds().filter(id => id !== userTruck).forEach(truckId => {
         count += Object.keys(inventory).filter(id => {
             const part = inventory[id];
             const minForTruck = part['minTruck_' + truckId] || 0;
@@ -950,7 +963,7 @@ async function loadCategories() {
 }
 
 async function loadTrucks() {
-    const cached = getCachedData('cache_trucks');
+    const cached = getCachedData('cache_locations_v2');
     if (cached) {
         trucks = cached;
         return;
@@ -966,11 +979,13 @@ async function loadTrucks() {
             if (row[0]) {
                 trucks[row[0]] = {
                     name: row[1],
-                    active: (row[2] === 'TRUE' || row[2] === true)
+                    active: (row[2] === 'TRUE' || row[2] === true),
+                    type: row[3] || 'vehicle',
+                    visibleTo: row[4] || 'all'
                 };
             }
         }
-        setCachedData('cache_trucks', trucks);
+        setCachedData('cache_locations_v2', trucks);
     }
 }
 
@@ -1242,12 +1257,12 @@ function populateDropdowns() {
         });
     }
     
-    const truckSelects = ['loadTruck', 'useTruck', 'returnTruck', 'newUserTruck', 'scanTruck', 'transferFromTruck', 'transferToTruck'];
+    const truckSelects = ['loadTruck', 'returnTruck', 'transferFromTruck', 'transferToTruck'];
     truckSelects.forEach(selectId => {
         const select = document.getElementById(selectId);
         if (select) {
             select.innerHTML = '';
-            Object.keys(trucks).filter(id => trucks[id].active).forEach(id => {
+            visibleLocationIds().forEach(id => {
                 const opt = document.createElement('option');
                 opt.value = id;
                 opt.textContent = trucks[id].name;
@@ -1258,16 +1273,29 @@ function populateDropdowns() {
             }
         }
     });
+
+    ['useTruck', 'newUserTruck', 'scanTruck'].forEach(selectId => {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        select.innerHTML = '';
+        visibleVehicleIds().forEach(id => {
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.textContent = trucks[id].name;
+            select.appendChild(opt);
+        });
+        if (userTruck && trucks[userTruck]) select.value = userTruck;
+    });
     
     const quickLoadLocation = document.getElementById('quickLoadLocation');
     if (quickLoadLocation) {
         while (quickLoadLocation.options.length > 2) {
             quickLoadLocation.remove(2);
         }
-        Object.keys(trucks).filter(id => trucks[id].active).forEach(id => {
+        visibleLocationIds().forEach(id => {
             const opt = document.createElement('option');
             opt.value = id;
-            opt.textContent = `🚚 ${trucks[id].name}`;
+            opt.textContent = `${locationIcon(id)} ${trucks[id].name}`;
             quickLoadLocation.appendChild(opt);
         });
     }
@@ -1280,7 +1308,7 @@ function renderTruckMinimumsInputs() {
     if (!container) return;
     
     container.innerHTML = '';
-    Object.keys(trucks).filter(id => trucks[id].active).forEach(truckId => {
+    visibleLocationIds().forEach(truckId => {
         const div = document.createElement('div');
         div.className = 'form-group';
         div.innerHTML = `
@@ -2083,7 +2111,7 @@ function updateDashboard() {
         }
     }
     
-    Object.keys(trucks).filter(id => trucks[id].active && id !== userTruck).forEach(truckId => {
+    visibleLocationIds().filter(id => id !== userTruck).forEach(truckId => {
         const truckLow = Object.keys(inventory).filter(id => {
             const part = inventory[id];
             const minForTruck = part['minTruck_' + truckId] || 0;
@@ -2093,7 +2121,7 @@ function updateDashboard() {
         if (truckLow.length > 0) {
             const section = document.createElement('div');
             section.className = 'low-stock-section';
-            section.innerHTML = `<h3>🚚 ${trucks[truckId].name} - Low Stock</h3>`;
+            section.innerHTML = `<h3>${locationIcon(truckId)} ${trucks[truckId].name} - Low Stock</h3>`;
             
             const grid = document.createElement('div');
             grid.className = 'low-stock-grid';
@@ -2700,7 +2728,7 @@ function openPartDetail(partId) {
     
     let stockHTML = '<h3>Current Stock</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px;">';
     stockHTML += `<div class="stock-badge ${part.shop < part.minStock ? 'stock-low' : 'stock-ok'}">Shop: ${part.shop} (Min: ${part.minStock})</div>`;
-    Object.keys(trucks).filter(id => trucks[id].active).forEach(truckId => {
+    visibleLocationIds().forEach(truckId => {
         const minForTruck = part['minTruck_' + truckId] || 0;
         const isLow = part[truckId] < minForTruck;
         stockHTML += `<div class="stock-badge ${isLow ? 'stock-low' : 'stock-ok'}">${trucks[truckId].name}: ${part[truckId]} (Min: ${minForTruck})</div>`;
@@ -2709,7 +2737,7 @@ function openPartDetail(partId) {
     
     let actionsHTML = '<h3>Quick Actions</h3><div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">';
     actionsHTML += `<button class="btn btn-primary" onclick="quickReceive('${partId}')">📥 Receive to Shop</button>`;
-    Object.keys(trucks).filter(id => trucks[id].active).forEach(truckId => {
+    visibleLocationIds().forEach(truckId => {
         actionsHTML += `<button class="btn btn-secondary" onclick="quickLoadToTruck('${partId}', '${truckId}')">📦 To ${trucks[truckId].name}</button>`;
     });
     actionsHTML += '</div>';
@@ -2717,7 +2745,7 @@ function openPartDetail(partId) {
     let useOnJobHTML = '<h3>🔧 Use on Job</h3>';
     useOnJobHTML += '<div style="background: #f8f9fa; border-radius: 12px; padding: 15px; margin-bottom: 20px;">';
     
-    const trucksWithPart = Object.keys(trucks).filter(id => trucks[id].active && part[id] > 0);
+    const trucksWithPart = visibleVehicleIds().filter(id => part[id] > 0);
     
     if (trucksWithPart.length > 0) {
         useOnJobHTML += `
