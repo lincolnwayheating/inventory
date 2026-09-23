@@ -37,6 +37,7 @@
         <div class="error-msg" id="errorMsg">❌ Invalid PIN</div>
         <input type="password" class="pin-input" id="pinInput" maxlength="4" placeholder="••••" inputmode="numeric" pattern="[0-9]*" autocomplete="off" autofocus>
         <button class="btn btn-primary" id="loginBtn" style="width: 100%;">Login</button>
+        <p style="margin-top: 18px;"><a href="./pending-history.html">Save pending history before signing in</a></p>
     </div>
 </div>
 
@@ -54,6 +55,7 @@
             </div>
             <div class="user-info">
                 <span class="user-badge" id="userBadge">Loading...</span>
+                <a href="./pending-history.html" style="font-size: .85em;">Save pending history</a>
                 <button class="logout-btn" id="logoutBtn">Logout</button>
             </div>
         </div>
@@ -341,7 +343,7 @@
                 <h3>My Account</h3>
                 <button class="btn btn-secondary" id="changePinBtn">Change PIN</button>
             </div>
-            
+
             <div class="settings-section">
                 <h3>Trucks</h3>
                 <div class="form-row">
