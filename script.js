@@ -262,7 +262,7 @@ function setCachedData(key, value) {
 }
 
 function clearCache() {
-    const keys = ['cache_categories', 'cache_trucks', 'cache_settings', 'cache_part_details', 'cache_users'];
+    const keys = ['cache_categories', 'cache_trucks', 'cache_locations_v3', 'cache_settings', 'cache_part_details', 'cache_users'];
     keys.forEach(key => localStorage.removeItem(key));
 }
 
@@ -339,6 +339,63 @@ document.addEventListener('DOMContentLoaded', function() {
 // AUTHENTICATION (with user caching)
 // ============================================
 
+async function readAppRows(action) {
+    let lastError;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        try {
+            const response = await fetch(SCRIPT_URL + '?action=' + action, { signal: controller.signal });
+            if (!response.ok) throw new Error('Inventory connection failed');
+            const result = await response.json();
+            if (!result || result.success !== true || !Array.isArray(result.data) || result.data.length === 0 || result.data.some(row => !Array.isArray(row))) {
+                throw new Error('Inventory data unavailable');
+            }
+            if ((action === 'readUsers' || action === 'readInventory') && result.data.length < 2) {
+                throw new Error('Inventory data incomplete');
+            }
+            if (action === 'readUsers') {
+                const expected = ['pin', 'name', 'truck', 'is_owner', 'canEditPIN'];
+                if (expected.some((name, index) => result.data[0][index] !== name) ||
+                    result.data.slice(1).some(row => row.length < expected.length || row[0] === '' || row[0] == null || !row[1])) {
+                    throw new Error('User data incomplete');
+                }
+            }
+            if (action === 'readInventory') validateInventoryRows(result.data);
+            return result;
+        } catch (error) {
+            lastError = error;
+        } finally {
+            clearTimeout(timeout);
+        }
+        if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 800));
+    }
+    throw lastError;
+}
+
+function validateInventoryRows(rows) {
+    if (!Array.isArray(rows) || rows.length < 2 || !Array.isArray(rows[0])) {
+        throw new Error('Inventory data incomplete');
+    }
+    const headers = rows[0];
+    if (headers[0] !== 'PartNumber' || headers[5] !== 'shop' || Object.keys(trucks).some(id => !headers.includes(id))) {
+        throw new Error('Inventory columns changed');
+    }
+    const stockColumns = [5, ...Object.keys(trucks).map(id => headers.indexOf(id))];
+    for (const row of rows.slice(1)) {
+        if (!Array.isArray(row) || row.length < headers.length) throw new Error('Inventory row incomplete');
+        if (!row[0]) continue;
+        for (const index of stockColumns) {
+            const value = row[index];
+            if (value === '' || value === null) continue;
+            const valid = typeof value === 'number' ? Number.isSafeInteger(value) && value >= 0 :
+                typeof value === 'string' && /^\d+$/.test(value) && Number.isSafeInteger(Number(value));
+            if (!valid) throw new Error('Inventory quantity invalid');
+        }
+    }
+    return headers;
+}
+
 async function login() {
     const pin = document.getElementById('pinInput').value;
     
@@ -365,8 +422,7 @@ async function login() {
         let cachedUsers = getCachedData('cache_users');
         
         if (!cachedUsers) {
-            const response = await fetch(SCRIPT_URL + '?action=readUsers');
-            const result = await response.json();
+            const result = await readAppRows('readUsers');
             
             if (result.success && result.data) {
                 cachedUsers = {};
@@ -498,7 +554,15 @@ async function init() {
     } catch (error) {
         showProcessing(false);
         console.error('Init error:', error);
-        showToast('Error loading data. Please refresh.', 'error');
+        if (error.message === 'Inventory columns changed') localStorage.removeItem('cache_locations_v3');
+        document.getElementById('appContainer').style.display = 'none';
+        document.getElementById('loginScreen').style.display = 'flex';
+        currentUser = null;
+        currentUserPin = null;
+        isOwner = false;
+        userTruck = null;
+        canEditPIN = false;
+        showToast('Inventory unavailable. Please try signing in again.', 'error');
     }
 }
 
@@ -518,16 +582,10 @@ async function loadStaticData() {
         return;
     }
     
-    const [settingsRes, categoriesRes, trucksRes] = await Promise.all([
-        fetch(SCRIPT_URL + '?action=readSettings'),
-        fetch(SCRIPT_URL + '?action=readCategories'),
-        fetch(SCRIPT_URL + '?action=readTrucks')
-    ]);
-    
     const [settingsData, categoriesData, trucksData] = await Promise.all([
-        settingsRes.json(),
-        categoriesRes.json(),
-        trucksRes.json()
+        readAppRows('readSettings'),
+        readAppRows('readCategories'),
+        readAppRows('readTrucks')
     ]);
     
     if (settingsData.success && settingsData.data) {
@@ -577,11 +635,10 @@ async function loadStaticData() {
 }
 
 async function loadInventoryQuantities() {
-    const response = await fetch(SCRIPT_URL + '?action=readInventory');
-    const result = await response.json();
+    const result = await readAppRows('readInventory');
     
-    if (result.success && result.data && result.data.length > 1) {
-        const headers = result.data[0];
+    {
+        const headers = validateInventoryRows(result.data);
         const cachedPartDetails = getCachedData('cache_part_details') || {};
         
         inventory = {};
@@ -675,18 +732,10 @@ async function refreshQuantitiesOnly() {
             return;
         }
         
-        const response = await fetch(SCRIPT_URL + '?action=readInventory');
+        const result = await readAppRows('readInventory');
         
-        if (response.status === 429) {
-            consecutiveRefreshErrors++;
-            console.error('⚠️ Rate limited. Pausing refresh.');
-            return;
-        }
-        
-        const result = await response.json();
-        
-        if (result.success && result.data && result.data.length > 1) {
-            const headers = result.data[0];
+        {
+            const headers = validateInventoryRows(result.data);
             
             for (let i = 1; i < result.data.length; i++) {
                 const row = result.data[i];
