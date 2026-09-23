@@ -343,7 +343,7 @@ async function readAppRows(action) {
     let lastError;
     for (let attempt = 0; attempt < 2; attempt++) {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
+        const timeout = setTimeout(() => controller.abort(), attempt === 0 ? 10000 : 65000);
         try {
             const response = await fetch(SCRIPT_URL + '?action=' + action, { signal: controller.signal });
             if (!response.ok) throw new Error('Inventory connection failed');
