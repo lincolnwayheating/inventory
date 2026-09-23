@@ -1403,6 +1403,42 @@ function guardedStockRequest(partId, part, updates) {
     return {action: 'updatePartQuantity', partId, expected, updates};
 }
 
+function stockMovementRequest(partId, part, updates, transaction) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    const operationId = 'hh-' + Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    return {...guardedStockRequest(partId, part, updates), action: 'moveStockWithHistory', operationId, transaction};
+}
+
+async function postStockMovement(request) {
+    // The same ID makes a retry safe if Apps Script commits but its reply is lost.
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
+        try {
+            const response = await fetch(SCRIPT_URL, {
+                method: 'POST', headers: {'Content-Type': 'text/plain'},
+                body: JSON.stringify(request), signal: controller.signal
+            });
+            if (response.ok) {
+                const result = await response.json();
+                if (result && (result.success === true || result.code === 'stock_changed' || result.code === 'save_failed')) {
+                    return {ok: true, json: async () => result};
+                }
+            }
+        } catch (error) {
+            console.warn('Movement response unavailable; retrying same operation ID', error);
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+    throw uncertainStockSaveError();
+}
+
+async function saveStockMovement(partId, part, updates, transaction) {
+    const response = await postStockMovement(stockMovementRequest(partId, part, updates, transaction));
+    await requireStockSaveSuccess(response);
+}
+
 function uncertainStockSaveError() {
     const error = new Error('Stock save result unknown');
     error.stockSaveMessage = 'Stock result uncertain. Check the Sheet before trying again.';
@@ -1436,26 +1472,9 @@ async function useParts() {
     
     showProcessing(true);
     
-    // Get location in parallel with update
-    const locationPromise = getCurrentLocation();
-    
     try {
-        const response = await guardedStockFetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(guardedStockRequest(partId, part, {
-                    [truck]: part[truck] - qty
-                }))
-        });
-        
-        await requireStockSaveSuccess(response);
-        
-        // Update local inventory immediately
-        inventory[partId][truck] = part[truck] - qty;
-        
-        // Log transaction in background (fire and forget with queue)
-        const location = await locationPromise;
-        queueTransaction({
+        const location = await getCurrentLocation();
+        await saveStockMovement(partId, part, {[truck]: part[truck] - qty}, {
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Used on Job',
@@ -1468,6 +1487,7 @@ async function useParts() {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
+        inventory[partId][truck] = part[truck] - qty;
         
         document.getElementById('useQty').value = '1';
         document.getElementById('jobName').value = '';
@@ -1533,37 +1553,23 @@ async function loadTruck() {
     
     showProcessing(true);
     
-    const locationPromise = getCurrentLocation();
-    
     try {
-        const response = await guardedStockFetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(guardedStockRequest(partId, part, {
-                    shop: part.shop - qty,
-                    [truck]: part[truck] + qty
-                }))
+        const location = await getCurrentLocation();
+        const request = stockMovementRequest(partId, part, {
+            shop: part.shop - qty,
+            [truck]: part[truck] + qty
+        }, {
+            timestamp: new Date().toLocaleString(), tech: currentUser,
+            action: 'Loaded Truck', details: `${part.name}: ${qty} loaded onto ${trucks[truck].name}`,
+            quantity: qty, from: 'Shop', to: trucks[truck].name,
+            address: location ? location.address : '', lat: location ? location.lat : '', lon: location ? location.lon : ''
         });
-        
+        const response = await postStockMovement(request);
         await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
         inventory[partId].shop = part.shop - qty;
         inventory[partId][truck] = part[truck] + qty;
-        
-        const location = await locationPromise;
-        queueTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Loaded Truck',
-            details: `${part.name}: ${qty} loaded onto ${trucks[truck].name}`,
-            quantity: qty,
-            from: 'Shop',
-            to: trucks[truck].name,
-            address: location ? location.address : '',
-            lat: location ? location.lat : '',
-            lon: location ? location.lon : ''
-        });
         
         document.getElementById('loadQty').value = '1';
         clearSelectedPart('load');
@@ -1595,37 +1601,23 @@ async function returnToShop() {
     
     showProcessing(true);
     
-    const locationPromise = getCurrentLocation();
-    
     try {
-        const response = await guardedStockFetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(guardedStockRequest(partId, part, {
-                    [truck]: part[truck] - qty,
-                    shop: part.shop + qty
-                }))
+        const location = await getCurrentLocation();
+        const request = stockMovementRequest(partId, part, {
+            [truck]: part[truck] - qty,
+            shop: part.shop + qty
+        }, {
+            timestamp: new Date().toLocaleString(), tech: currentUser,
+            action: 'Returned to Shop', details: `${part.name}: ${qty} returned from ${trucks[truck].name}`,
+            quantity: qty, from: trucks[truck].name, to: 'Shop',
+            address: location ? location.address : '', lat: location ? location.lat : '', lon: location ? location.lon : ''
         });
-        
+        const response = await postStockMovement(request);
         await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
         inventory[partId][truck] = part[truck] - qty;
         inventory[partId].shop = part.shop + qty;
-        
-        const location = await locationPromise;
-        queueTransaction({
-            timestamp: new Date().toLocaleString(),
-            tech: currentUser,
-            action: 'Returned to Shop',
-            details: `${part.name}: ${qty} returned from ${trucks[truck].name}`,
-            quantity: qty,
-            from: trucks[truck].name,
-            to: 'Shop',
-            address: location ? location.address : '',
-            lat: location ? location.lat : '',
-            lon: location ? location.lon : ''
-        });
         
         document.getElementById('returnQty').value = '1';
         clearSelectedPart('return');
@@ -1663,26 +1655,12 @@ async function transferParts() {
     
     showProcessing(true);
     
-    const locationPromise = getCurrentLocation();
-    
     try {
-        const response = await guardedStockFetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(guardedStockRequest(partId, part, {
-                    [fromTruck]: part[fromTruck] - qty,
-                    [toTruck]: part[toTruck] + qty
-                }))
-        });
-        
-        await requireStockSaveSuccess(response);
-        
-        // Update local inventory immediately
-        inventory[partId][fromTruck] = part[fromTruck] - qty;
-        inventory[partId][toTruck] = part[toTruck] + qty;
-        
-        const location = await locationPromise;
-        queueTransaction({
+        const location = await getCurrentLocation();
+        await saveStockMovement(partId, part, {
+            [fromTruck]: part[fromTruck] - qty,
+            [toTruck]: part[toTruck] + qty
+        }, {
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Transferred',
@@ -1694,6 +1672,8 @@ async function transferParts() {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
+        inventory[partId][fromTruck] = part[fromTruck] - qty;
+        inventory[partId][toTruck] = part[toTruck] + qty;
         
         document.getElementById('transferQty').value = '1';
         clearSelectedPart('transfer');
@@ -1719,24 +1699,9 @@ async function receiveStock() {
     showProcessing(true);
     
     const part = inventory[partId];
-    const locationPromise = getCurrentLocation();
-    
     try {
-        const response = await guardedStockFetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(guardedStockRequest(partId, part, {
-                    shop: part.shop + qty
-                }))
-        });
-        
-        await requireStockSaveSuccess(response);
-        
-        // Update local inventory immediately
-        inventory[partId].shop = part.shop + qty;
-        
-        const location = await locationPromise;
-        queueTransaction({
+        const location = await getCurrentLocation();
+        await saveStockMovement(partId, part, {shop: part.shop + qty}, {
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Received Stock',
@@ -1748,6 +1713,7 @@ async function receiveStock() {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
+        inventory[partId].shop = part.shop + qty;
         
         document.getElementById('receiveQty').value = '1';
         clearSelectedPart('receive');
@@ -1772,24 +1738,9 @@ async function quickReceive(partId) {
     showProcessing(true);
     
     const part = inventory[partId];
-    const locationPromise = getCurrentLocation();
-    
     try {
-        const response = await guardedStockFetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(guardedStockRequest(partId, part, {
-                    shop: part.shop + parseInt(qty)
-                }))
-        });
-        
-        await requireStockSaveSuccess(response);
-        
-        // Update local inventory immediately
-        inventory[partId].shop = part.shop + parseInt(qty);
-        
-        const location = await locationPromise;
-        queueTransaction({
+        const location = await getCurrentLocation();
+        await saveStockMovement(partId, part, {shop: part.shop + parseInt(qty)}, {
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Received Stock',
@@ -1801,6 +1752,7 @@ async function quickReceive(partId) {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
+        inventory[partId].shop = part.shop + parseInt(qty);
         
         updateDashboard();
         closePartDetailModal();
@@ -1826,26 +1778,12 @@ async function quickLoadToTruck(partId, truckId) {
     
     showProcessing(true);
     
-    const locationPromise = getCurrentLocation();
-    
     try {
-        const response = await guardedStockFetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(guardedStockRequest(partId, part, {
-                    shop: part.shop - parseInt(qty),
-                    [truckId]: part[truckId] + parseInt(qty)
-                }))
-        });
-        
-        await requireStockSaveSuccess(response);
-        
-        // Update local inventory immediately
-        inventory[partId].shop = part.shop - parseInt(qty);
-        inventory[partId][truckId] = part[truckId] + parseInt(qty);
-        
-        const location = await locationPromise;
-        queueTransaction({
+        const location = await getCurrentLocation();
+        await saveStockMovement(partId, part, {
+            shop: part.shop - parseInt(qty),
+            [truckId]: part[truckId] + parseInt(qty)
+        }, {
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Loaded Truck',
@@ -1857,6 +1795,8 @@ async function quickLoadToTruck(partId, truckId) {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
+        inventory[partId].shop = part.shop - parseInt(qty);
+        inventory[partId][truckId] = part[truckId] + parseInt(qty);
         
         updateDashboard();
         closePartDetailModal();
@@ -1887,24 +1827,9 @@ async function quickUseOnJob(partId) {
     
     showProcessing(true);
     
-    const locationPromise = getCurrentLocation();
-    
     try {
-        const response = await guardedStockFetch(SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(guardedStockRequest(partId, part, {
-                    [truck]: part[truck] - qty
-                }))
-        });
-        
-        await requireStockSaveSuccess(response);
-        
-        // Update local inventory immediately
-        inventory[partId][truck] = part[truck] - qty;
-        
-        const location = await locationPromise;
-        queueTransaction({
+        const location = await getCurrentLocation();
+        await saveStockMovement(partId, part, {[truck]: part[truck] - qty}, {
             timestamp: new Date().toLocaleString(),
             tech: currentUser,
             action: 'Used on Job',
@@ -1917,6 +1842,7 @@ async function quickUseOnJob(partId) {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
+        inventory[partId][truck] = part[truck] - qty;
         
         updateDashboard();
         closePartDetailModal();
@@ -3609,18 +3535,7 @@ async function processQuickLoad() {
             const part = inventory[partId];
             
             if (location === 'shop') {
-                const response = await guardedStockFetch(SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify(guardedStockRequest(partId, part, { shop: part.shop + qty }))
-                });
-                
-                await requireStockSaveSuccess(response);
-                
-                // Update local inventory
-                inventory[partId].shop = part.shop + qty;
-                
-                queueTransaction({
+                await saveStockMovement(partId, part, {shop: part.shop + qty}, {
                     timestamp: new Date().toLocaleString(),
                     tech: currentUser,
                     action: 'Restocked Shop',
@@ -3632,26 +3547,15 @@ async function processQuickLoad() {
                     lat: gpsLocation ? gpsLocation.lat : '',
                     lon: gpsLocation ? gpsLocation.lon : ''
                 });
+                inventory[partId].shop = part.shop + qty;
                 completedParts++;
             } else {
                 if (part.shop < qty) continue;
                 
-                const response = await guardedStockFetch(SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify(guardedStockRequest(partId, part, {
-                            shop: part.shop - qty,
-                            [location]: part[location] + qty
-                        }))
-                });
-                
-                await requireStockSaveSuccess(response);
-                
-                // Update local inventory
-                inventory[partId].shop = part.shop - qty;
-                inventory[partId][location] = part[location] + qty;
-                
-                queueTransaction({
+                await saveStockMovement(partId, part, {
+                    shop: part.shop - qty,
+                    [location]: part[location] + qty
+                }, {
                     timestamp: new Date().toLocaleString(),
                     tech: currentUser,
                     action: 'Quick Load',
@@ -3663,6 +3567,8 @@ async function processQuickLoad() {
                     lat: gpsLocation ? gpsLocation.lat : '',
                     lon: gpsLocation ? gpsLocation.lon : ''
                 });
+                inventory[partId].shop = part.shop - qty;
+                inventory[partId][location] = part[location] + qty;
                 completedParts++;
             }
         }
