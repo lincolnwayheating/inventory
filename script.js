@@ -362,10 +362,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function readAppRows(action) {
     let lastError;
-    // Live Apps Script inventory reads can complete after 35 seconds. Give
-    // login and stock reads enough time to use that successful response.
+    // Retry an unresponsive login/stock request sooner, while still allowing
+    // the second request time to use a slow successful response.
     const timeouts = action === 'readHistory' ? [8000, 12000, 20000] :
-        (action === 'readUsers' || action === 'readInventory' ? [70000, 70000] : [12000, 20000, 35000]);
+        (action === 'readUsers' || action === 'readInventory' ? [20000, 70000] : [12000, 20000, 35000]);
     for (let attempt = 0; attempt < timeouts.length; attempt++) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeouts[attempt]);
