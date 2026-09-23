@@ -343,7 +343,8 @@ async function readAppRows(action) {
     let lastError;
     for (let attempt = 0; attempt < 2; attempt++) {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), attempt === 0 ? 10000 : 65000);
+        const timeoutMs = action === 'readHistory' ? (attempt === 0 ? 10000 : 20000) : (attempt === 0 ? 10000 : 65000);
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
         try {
             const response = await fetch(SCRIPT_URL + '?action=' + action, { signal: controller.signal });
             if (!response.ok) throw new Error('Inventory connection failed');
@@ -351,7 +352,7 @@ async function readAppRows(action) {
             if (!result || result.success !== true || !Array.isArray(result.data) || result.data.length === 0 || result.data.some(row => !Array.isArray(row))) {
                 throw new Error('Inventory data unavailable');
             }
-            if ((action === 'readUsers' || action === 'readInventory') && result.data.length < 2) {
+            if ((action === 'readUsers' || action === 'readInventory' || action === 'readHistory') && result.data.length < 2) {
                 throw new Error('Inventory data incomplete');
             }
             if (action === 'readUsers') {
@@ -1045,8 +1046,7 @@ async function loadInventory() {
 async function loadHistory() {
     if (historyLoaded) return; // Already loaded
     
-    const response = await fetch(SCRIPT_URL + '?action=readHistory');
-    const result = await response.json();
+    const result = await readAppRows('readHistory');
     
     if (result.success && result.data && result.data.length > 1) {
         history = [];
@@ -1150,8 +1150,16 @@ async function switchTab(tabName) {
             // Lazy load history
             if (!historyLoaded) {
                 showProcessing(true);
-                await loadHistory();
-                showProcessing(false);
+                try {
+                    await loadHistory();
+                } catch (error) {
+                    console.error('History load error:', error);
+                    document.getElementById('historyList').textContent = 'History could not load. Try again.';
+                    showToast('History could not load. Try again.', 'error');
+                    return;
+                } finally {
+                    showProcessing(false);
+                }
             }
             updateHistory();
         }
