@@ -1372,6 +1372,32 @@ function renderTruckMinimumsInputs() {
 // QUICK ACTIONS - OPTIMIZED WITH LOCAL UPDATES
 // ============================================
 
+function guardedStockRequest(partId, part, updates) {
+    const expected = {};
+    for (const column of Object.keys(updates)) {
+        if (!Number.isSafeInteger(part[column]) || part[column] < 0 ||
+            !Number.isSafeInteger(updates[column]) || updates[column] < 0) {
+            throw new Error('Invalid stock quantity. Refresh before trying again.');
+        }
+        expected[column] = part[column];
+    }
+    return {action: 'updatePartQuantity', partId, expected, updates};
+}
+
+function uncertainStockSaveError() {
+    const error = new Error('Stock save result unknown');
+    error.stockSaveMessage = 'Stock result uncertain. Check the Sheet before trying again.';
+    return error;
+}
+
+async function guardedStockFetch(url, options) {
+    try {
+        return await fetch(url, options);
+    } catch (error) {
+        throw uncertainStockSaveError();
+    }
+}
+
 async function useParts() {
     const truck = document.getElementById('useTruck').value;
     const partId = selectedParts.use;
@@ -1395,16 +1421,12 @@ async function useParts() {
     const locationPromise = getCurrentLocation();
     
     try {
-        const response = await fetch(SCRIPT_URL, {
+        const response = await guardedStockFetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
+            body: JSON.stringify(guardedStockRequest(partId, part, {
                     [truck]: part[truck] - qty
-                }
-            })
+                }))
         });
         
         await requireStockSaveSuccess(response);
@@ -1437,16 +1459,41 @@ async function useParts() {
     } catch (error) {
         showProcessing(false);
         console.error('Error:', error);
-        showToast('Error recording usage', 'error');
+        showToast(stockSaveErrorMessage(error, 'Error recording usage'), 'error');
     }
 }
 
 async function requireStockSaveSuccess(response) {
-    if (!response.ok) throw new Error('Update failed');
-    const result = await response.json();
-    if (!result || result.success !== true) {
-        throw new Error('Stock was not confirmed saved. Refresh before trying again.');
+    if (!response.ok) throw uncertainStockSaveError();
+    let result;
+    try {
+        result = await response.json();
+    } catch (error) {
+        throw uncertainStockSaveError();
     }
+    if (!result || result.success !== true) {
+        if (result && result.code === 'stock_changed') {
+            try {
+                await loadInventoryQuantities();
+                updateDashboard();
+            } catch (refreshError) {
+                console.warn('Could not refresh changed stock', refreshError);
+            }
+            const error = new Error('Stock changed');
+            error.stockSaveMessage = 'Stock changed. Check the new counts and try again.';
+            throw error;
+        }
+        if (result && result.code === 'write_uncertain') {
+            const error = new Error('Stock save uncertain');
+            error.stockSaveMessage = 'Stock result uncertain. Check the Sheet before trying again.';
+            throw error;
+        }
+        throw uncertainStockSaveError();
+    }
+}
+
+function stockSaveErrorMessage(error, fallback) {
+    return error && error.stockSaveMessage ? error.stockSaveMessage : fallback;
 }
 
 async function loadTruck() {
@@ -1470,17 +1517,13 @@ async function loadTruck() {
     const locationPromise = getCurrentLocation();
     
     try {
-        const response = await fetch(SCRIPT_URL, {
+        const response = await guardedStockFetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
+            body: JSON.stringify(guardedStockRequest(partId, part, {
                     shop: part.shop - qty,
                     [truck]: part[truck] + qty
-                }
-            })
+                }))
         });
         
         await requireStockSaveSuccess(response);
@@ -1511,7 +1554,7 @@ async function loadTruck() {
     } catch (error) {
         showProcessing(false);
         console.error('Error:', error);
-        showToast('Error loading truck', 'error');
+        showToast(stockSaveErrorMessage(error, 'Error loading truck'), 'error');
     }
 }
 
@@ -1536,17 +1579,13 @@ async function returnToShop() {
     const locationPromise = getCurrentLocation();
     
     try {
-        const response = await fetch(SCRIPT_URL, {
+        const response = await guardedStockFetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
+            body: JSON.stringify(guardedStockRequest(partId, part, {
                     [truck]: part[truck] - qty,
                     shop: part.shop + qty
-                }
-            })
+                }))
         });
         
         await requireStockSaveSuccess(response);
@@ -1577,7 +1616,7 @@ async function returnToShop() {
     } catch (error) {
         showProcessing(false);
         console.error('Error:', error);
-        showToast('Error returning to shop', 'error');
+        showToast(stockSaveErrorMessage(error, 'Error returning to shop'), 'error');
     }
 }
 
@@ -1608,17 +1647,13 @@ async function transferParts() {
     const locationPromise = getCurrentLocation();
     
     try {
-        const response = await fetch(SCRIPT_URL, {
+        const response = await guardedStockFetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
+            body: JSON.stringify(guardedStockRequest(partId, part, {
                     [fromTruck]: part[fromTruck] - qty,
                     [toTruck]: part[toTruck] + qty
-                }
-            })
+                }))
         });
         
         await requireStockSaveSuccess(response);
@@ -1649,7 +1684,7 @@ async function transferParts() {
     } catch (error) {
         showProcessing(false);
         console.error('Error:', error);
-        showToast('Error transferring', 'error');
+        showToast(stockSaveErrorMessage(error, 'Error transferring'), 'error');
     }
 }
 
@@ -1668,16 +1703,12 @@ async function receiveStock() {
     const locationPromise = getCurrentLocation();
     
     try {
-        const response = await fetch(SCRIPT_URL, {
+        const response = await guardedStockFetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
+            body: JSON.stringify(guardedStockRequest(partId, part, {
                     shop: part.shop + qty
-                }
-            })
+                }))
         });
         
         await requireStockSaveSuccess(response);
@@ -1707,7 +1738,7 @@ async function receiveStock() {
     } catch (error) {
         showProcessing(false);
         console.error('Error:', error);
-        showToast('Error receiving stock', 'error');
+        showToast(stockSaveErrorMessage(error, 'Error receiving stock'), 'error');
     }
 }
 
@@ -1725,16 +1756,12 @@ async function quickReceive(partId) {
     const locationPromise = getCurrentLocation();
     
     try {
-        const response = await fetch(SCRIPT_URL, {
+        const response = await guardedStockFetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
+            body: JSON.stringify(guardedStockRequest(partId, part, {
                     shop: part.shop + parseInt(qty)
-                }
-            })
+                }))
         });
         
         await requireStockSaveSuccess(response);
@@ -1763,7 +1790,7 @@ async function quickReceive(partId) {
     } catch (error) {
         showProcessing(false);
         console.error('Error:', error);
-        showToast('Error receiving stock', 'error');
+        showToast(stockSaveErrorMessage(error, 'Error receiving stock'), 'error');
     }
 }
 
@@ -1783,17 +1810,13 @@ async function quickLoadToTruck(partId, truckId) {
     const locationPromise = getCurrentLocation();
     
     try {
-        const response = await fetch(SCRIPT_URL, {
+        const response = await guardedStockFetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
+            body: JSON.stringify(guardedStockRequest(partId, part, {
                     shop: part.shop - parseInt(qty),
                     [truckId]: part[truckId] + parseInt(qty)
-                }
-            })
+                }))
         });
         
         await requireStockSaveSuccess(response);
@@ -1823,7 +1846,7 @@ async function quickLoadToTruck(partId, truckId) {
     } catch (error) {
         showProcessing(false);
         console.error('Error:', error);
-        showToast('Error loading truck', 'error');
+        showToast(stockSaveErrorMessage(error, 'Error loading truck'), 'error');
     }
 }
 
@@ -1848,16 +1871,12 @@ async function quickUseOnJob(partId) {
     const locationPromise = getCurrentLocation();
     
     try {
-        const response = await fetch(SCRIPT_URL, {
+        const response = await guardedStockFetch(SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'updatePartQuantity',
-                partId: partId,
-                updates: {
+            body: JSON.stringify(guardedStockRequest(partId, part, {
                     [truck]: part[truck] - qty
-                }
-            })
+                }))
         });
         
         await requireStockSaveSuccess(response);
@@ -1887,7 +1906,7 @@ async function quickUseOnJob(partId) {
     } catch (error) {
         showProcessing(false);
         console.error('Error:', error);
-        showToast('Error recording usage', 'error');
+        showToast(stockSaveErrorMessage(error, 'Error recording usage'), 'error');
     }
 }
 
@@ -3559,6 +3578,7 @@ async function processQuickLoad() {
     
     const gpsLocation = await getCurrentLocation();
     
+    let completedParts = 0;
     try {
         for (const checkbox of checkboxes) {
             const partId = checkbox.getAttribute('data-part-id');
@@ -3570,14 +3590,10 @@ async function processQuickLoad() {
             const part = inventory[partId];
             
             if (location === 'shop') {
-                const response = await fetch(SCRIPT_URL, {
+                const response = await guardedStockFetch(SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify({
-                        action: 'updatePartQuantity',
-                        partId: partId,
-                        updates: { shop: part.shop + qty }
-                    })
+                    body: JSON.stringify(guardedStockRequest(partId, part, { shop: part.shop + qty }))
                 });
                 
                 await requireStockSaveSuccess(response);
@@ -3597,20 +3613,17 @@ async function processQuickLoad() {
                     lat: gpsLocation ? gpsLocation.lat : '',
                     lon: gpsLocation ? gpsLocation.lon : ''
                 });
+                completedParts++;
             } else {
                 if (part.shop < qty) continue;
                 
-                const response = await fetch(SCRIPT_URL, {
+                const response = await guardedStockFetch(SCRIPT_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify({
-                        action: 'updatePartQuantity',
-                        partId: partId,
-                        updates: {
+                    body: JSON.stringify(guardedStockRequest(partId, part, {
                             shop: part.shop - qty,
                             [location]: part[location] + qty
-                        }
-                    })
+                        }))
                 });
                 
                 await requireStockSaveSuccess(response);
@@ -3631,6 +3644,7 @@ async function processQuickLoad() {
                     lat: gpsLocation ? gpsLocation.lat : '',
                     lon: gpsLocation ? gpsLocation.lon : ''
                 });
+                completedParts++;
             }
         }
         
@@ -3641,6 +3655,10 @@ async function processQuickLoad() {
     } catch (error) {
         showProcessing(false);
         console.error('Error:', error);
-        showToast('Error processing quick load', 'error');
+        if (completedParts > 0) {
+            showToast(`${completedParts} item(s) saved before Quick Load stopped. Check stock and History before retrying.`, 'error');
+        } else {
+            showToast(stockSaveErrorMessage(error, 'Error processing quick load'), 'error');
+        }
     }
 }
