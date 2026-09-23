@@ -157,6 +157,17 @@ async function getCurrentLocation() {
             return;
         }
 
+        // Location is optional. Never hold a completed stock save hostage to a
+        // browser permission prompt or a slow reverse-geocoding request.
+        let settled = false;
+        const finish = (location) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(locationTimeout);
+            resolve(location);
+        };
+        const locationTimeout = setTimeout(() => finish(lastKnownLocation), 6000);
+
         navigator.geolocation.getCurrentPosition(
             async (position) => {
                 const lat = position.coords.latitude;
@@ -174,11 +185,11 @@ async function getCurrentLocation() {
                     lat: lat.toFixed(6),
                     lon: lon.toFixed(6)
                 };
-                resolve(lastKnownLocation);
+                finish(lastKnownLocation);
             },
             (error) => {
                 console.warn('Location error:', error.message);
-                resolve(lastKnownLocation);
+                finish(lastKnownLocation);
             },
             {
                 enableHighAccuracy: false,
