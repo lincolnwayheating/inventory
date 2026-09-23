@@ -362,10 +362,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function readAppRows(action) {
     let lastError;
-    // Retry an unresponsive login/stock request sooner, while still allowing
-    // the second request time to use a slow successful response.
+    // A healthy inventory read can take about 20 seconds through Apps Script.
+    // Give the first login/stock request room to finish before retrying it.
     const timeouts = action === 'readHistory' ? [8000, 12000, 20000] :
-        (action === 'readUsers' || action === 'readInventory' ? [20000, 70000] : [12000, 20000, 35000]);
+        (action === 'readUsers' || action === 'readInventory' ? [30000, 70000] : [12000, 20000, 35000]);
     for (let attempt = 0; attempt < timeouts.length; attempt++) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeouts[attempt]);
