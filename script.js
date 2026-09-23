@@ -352,12 +352,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function readAppRows(action) {
     let lastError;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const timeouts = action === 'readHistory' ? [8000, 12000, 20000] : [12000, 20000, 35000];
+    for (let attempt = 0; attempt < timeouts.length; attempt++) {
         const controller = new AbortController();
-        const timeoutMs = action === 'readHistory' ? (attempt === 0 ? 10000 : 20000) : (attempt === 0 ? 10000 : 65000);
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const timeout = setTimeout(() => controller.abort(), timeouts[attempt]);
         try {
-            const response = await fetch(SCRIPT_URL + '?action=' + action, { signal: controller.signal });
+            const url = SCRIPT_URL + '?action=' + encodeURIComponent(action) + '&retry=' + Date.now() + '-' + attempt;
+            const response = await fetch(url, { signal: controller.signal, cache: 'no-store' });
             if (!response.ok) throw new Error('Inventory connection failed');
             const result = await response.json();
             if (!result || result.success !== true || !Array.isArray(result.data) || result.data.length === 0 || result.data.some(row => !Array.isArray(row))) {
@@ -380,7 +381,7 @@ async function readAppRows(action) {
         } finally {
             clearTimeout(timeout);
         }
-        if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 800));
+        if (attempt < timeouts.length - 1) await new Promise(resolve => setTimeout(resolve, attempt === 0 ? 750 : 2000));
     }
     throw lastError;
 }
@@ -409,6 +410,7 @@ function validateInventoryRows(rows) {
 }
 
 async function login() {
+    if (login.inFlight) return;
     const pin = document.getElementById('pinInput').value;
     
     if (lockoutUntil && Date.now() < lockoutUntil) {
@@ -427,6 +429,7 @@ async function login() {
         localStorage.setItem('loginAttempts', '0');
     }
     
+    login.inFlight = true;
     showProcessing(true);
     
     try {
@@ -512,6 +515,8 @@ async function login() {
         showProcessing(false);
         console.error('Login error:', error);
         showToast('Connection error. Please try again.', 'error');
+    } finally {
+        login.inFlight = false;
     }
 }
 
