@@ -72,6 +72,11 @@ let autoRefreshTimer = null;
 
 const TRANSACTION_QUEUE_KEY = 'hvac_transaction_queue';
 
+function newHistoryOperationId() {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return 'history-' + Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function getTransactionQueue() {
     try {
         const queue = localStorage.getItem(TRANSACTION_QUEUE_KEY);
@@ -90,10 +95,11 @@ function saveTransactionQueue(queue) {
     }
 }
 
-function addToTransactionQueue(transaction) {
+function addToTransactionQueue(transaction, operationId) {
     const queue = getTransactionQueue();
     queue.push({
         transaction: transaction,
+        operationId: operationId,
         attempts: 0,
         addedAt: Date.now()
     });
@@ -108,29 +114,33 @@ async function processTransactionQueue() {
     
     for (const item of queue) {
         try {
+            if (!item.operationId) {
+                // Older queued rows may already be in History after a lost reply.
+                // Preserve them for reconciliation instead of risking a duplicate.
+                item.requiresReconciliation = true;
+                remainingQueue.push(item);
+                continue;
+            }
             const response = await fetch(SCRIPT_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain' },
                 body: JSON.stringify({
                     action: 'addTransaction',
+                    operationId: item.operationId,
                     transaction: item.transaction
                 })
             });
             
-            if (!response.ok) {
-                throw new Error('Server error');
+            if (!response.ok || !(await response.json()).success) {
+                throw new Error('History was not accepted by the server');
             }
             
             // Success - don't add back to queue
             console.log('✓ Queued transaction synced:', item.transaction.action);
         } catch (error) {
             item.attempts++;
-            // Keep trying for 24 hours (max 50 attempts)
-            if (item.attempts < 50 && (Date.now() - item.addedAt) < 24 * 60 * 60 * 1000) {
-                remainingQueue.push(item);
-            } else {
-                console.error('Transaction permanently failed after retries:', item.transaction);
-            }
+            // Never silently discard an unsaved History record.
+            remainingQueue.push(item);
         }
     }
     
@@ -1868,22 +1878,24 @@ async function quickUseOnJob(partId) {
 // ============================================
 
 function queueTransaction(transaction) {
+    const operationId = newHistoryOperationId();
     // Try to send immediately
     fetch(SCRIPT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({
             action: 'addTransaction',
+            operationId: operationId,
             transaction: transaction
         })
-    }).then(response => {
-        if (!response.ok) {
-            throw new Error('Failed to log transaction');
+    }).then(async response => {
+        if (!response.ok || !(await response.json()).success) {
+            throw new Error('History was not accepted by the server');
         }
         console.log('✓ Transaction logged:', transaction.action);
     }).catch(error => {
         console.warn('Transaction failed, queuing for retry:', error);
-        addToTransactionQueue(transaction);
+        addToTransactionQueue(transaction, operationId);
     });
 }
 
