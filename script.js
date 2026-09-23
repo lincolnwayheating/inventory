@@ -1358,7 +1358,7 @@ async function useParts() {
             })
         });
         
-        if (!response.ok) throw new Error('Update failed');
+        await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
         inventory[partId][truck] = part[truck] - qty;
@@ -1389,6 +1389,14 @@ async function useParts() {
         showProcessing(false);
         console.error('Error:', error);
         showToast('Error recording usage', 'error');
+    }
+}
+
+async function requireStockSaveSuccess(response) {
+    if (!response.ok) throw new Error('Update failed');
+    const result = await response.json();
+    if (!result || result.success !== true) {
+        throw new Error('Stock was not confirmed saved. Refresh before trying again.');
     }
 }
 
@@ -1426,7 +1434,7 @@ async function loadTruck() {
             })
         });
         
-        if (!response.ok) throw new Error('Update failed');
+        await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
         inventory[partId].shop = part.shop - qty;
@@ -1492,7 +1500,7 @@ async function returnToShop() {
             })
         });
         
-        if (!response.ok) throw new Error('Update failed');
+        await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
         inventory[partId][truck] = part[truck] - qty;
@@ -1564,7 +1572,7 @@ async function transferParts() {
             })
         });
         
-        if (!response.ok) throw new Error('Update failed');
+        await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
         inventory[partId][fromTruck] = part[fromTruck] - qty;
@@ -1623,7 +1631,7 @@ async function receiveStock() {
             })
         });
         
-        if (!response.ok) throw new Error('Update failed');
+        await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
         inventory[partId].shop = part.shop + qty;
@@ -1680,7 +1688,7 @@ async function quickReceive(partId) {
             })
         });
         
-        if (!response.ok) throw new Error('Update failed');
+        await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
         inventory[partId].shop = part.shop + parseInt(qty);
@@ -1739,7 +1747,7 @@ async function quickLoadToTruck(partId, truckId) {
             })
         });
         
-        if (!response.ok) throw new Error('Update failed');
+        await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
         inventory[partId].shop = part.shop - parseInt(qty);
@@ -1803,7 +1811,7 @@ async function quickUseOnJob(partId) {
             })
         });
         
-        if (!response.ok) throw new Error('Update failed');
+        await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
         inventory[partId][truck] = part[truck] - qty;
@@ -3523,7 +3531,7 @@ async function processQuickLoad() {
                     })
                 });
                 
-                if (!response.ok) throw new Error('Update failed');
+                await requireStockSaveSuccess(response);
                 
                 // Update local inventory
                 inventory[partId].shop = part.shop + qty;
@@ -3556,7 +3564,7 @@ async function processQuickLoad() {
                     })
                 });
                 
-                if (!response.ok) throw new Error('Update failed');
+                await requireStockSaveSuccess(response);
                 
                 // Update local inventory
                 inventory[partId].shop = part.shop - qty;
