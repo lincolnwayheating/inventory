@@ -665,7 +665,9 @@ async function loadStaticData() {
 }
 
 async function loadInventoryQuantities() {
+    const readEpoch = ++inventoryReadEpoch;
     const result = await readAppRows('readInventory');
+    if (readEpoch !== inventoryReadEpoch) return;
     
     {
         const headers = validateInventoryRows(result.data);
@@ -743,8 +745,13 @@ async function loadInventoryQuantities() {
 
 let consecutiveRefreshErrors = 0;
 const MAX_ERRORS_BEFORE_PAUSE = 3;
+let inventoryReadEpoch = 0;
+let backgroundInventoryReadInFlight = false;
 
 async function refreshQuantitiesOnly() {
+    if (backgroundInventoryReadInFlight) return;
+    backgroundInventoryReadInFlight = true;
+    const readEpoch = inventoryReadEpoch;
     try {
         if (consecutiveRefreshErrors >= MAX_ERRORS_BEFORE_PAUSE) {
             console.warn('⚠️ Too many refresh errors. Pausing auto-refresh for 5 minutes.');
@@ -763,6 +770,9 @@ async function refreshQuantitiesOnly() {
         }
         
         const result = await readAppRows('readInventory');
+        // A manual refresh or confirmed stock move may have changed local counts
+        // while this slow background request was in flight.
+        if (readEpoch !== inventoryReadEpoch) return;
         
         {
             const headers = validateInventoryRows(result.data);
@@ -813,6 +823,8 @@ async function refreshQuantitiesOnly() {
     } catch (error) {
         consecutiveRefreshErrors++;
         console.error('Background refresh error:', error);
+    } finally {
+        backgroundInventoryReadInFlight = false;
     }
 }
 
@@ -1547,6 +1559,7 @@ async function requireStockSaveSuccess(response) {
         }
         throw uncertainStockSaveError();
     }
+    inventoryReadEpoch++;
 }
 
 function stockSaveErrorMessage(error, fallback) {
