@@ -3446,14 +3446,50 @@ async function deleteUser(pin) {
 // QUICK LOAD - OPTIMIZED
 // ============================================
 
+let quickLoadRequestId = 0;
+
+async function readLowStockItems(location) {
+    let lastError;
+    for (const [attempt, waitMs] of [30000, 70000].entries()) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), waitMs);
+        try {
+            const url = SCRIPT_URL + '?action=getLowStockItems&retry=' + Date.now() + '-' + attempt;
+            const response = await fetch(url, { signal: controller.signal, cache: 'no-store' });
+            if (!response.ok) throw new Error('Quick Load connection failed');
+            const result = await response.json();
+            const data = result?.data;
+            const items = location === 'shop' ? data?.shop : data?.trucks?.[location];
+            if (result?.success !== true || !Array.isArray(data?.shop) ||
+                !data?.trucks || typeof data.trucks !== 'object' || Array.isArray(data.trucks) ||
+                !Array.isArray(items) || items.some(item => !item || item.id == null ||
+                    !Number.isSafeInteger(item.current) || !Number.isSafeInteger(item.minimum) ||
+                    !Number.isSafeInteger(item.needed) || item.current < 0 || item.minimum < 0 ||
+                    item.needed < 0 || (location !== 'shop' && !Number.isSafeInteger(item.shopQty)))) {
+                throw new Error('Quick Load data unavailable');
+            }
+            return result;
+        } catch (error) {
+            lastError = error;
+        } finally {
+            clearTimeout(timeout);
+        }
+        if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 750));
+    }
+    throw lastError;
+}
+
 async function updateQuickLoadList() {
+    const requestId = ++quickLoadRequestId;
     const container = document.getElementById('quickLoadList');
     const btn = document.getElementById('quickLoadBtn');
     const location = document.getElementById('quickLoadLocation').value;
+    btn.disabled = true;
     
     if (!location) {
         container.innerHTML = '<p style="color: #666;">Select a location</p>';
         btn.style.display = 'none';
+        showProcessing(false);
         return;
     }
     
@@ -3462,15 +3498,8 @@ async function updateQuickLoadList() {
     showProcessing(true);
     
     try {
-        const response = await fetch(SCRIPT_URL + '?action=getLowStockItems');
-        const result = await response.json();
-        
-        if (!result.success || !result.data) {
-            container.innerHTML = '<p style="color: #e74c3c;">Error loading data</p>';
-            btn.style.display = 'none';
-            showProcessing(false);
-            return;
-        }
+        const result = await readLowStockItems(location);
+        if (requestId !== quickLoadRequestId) return;
         
         let items = location === 'shop' ? result.data.shop : (result.data.trucks[location] || []);
         
@@ -3521,11 +3550,13 @@ async function updateQuickLoadList() {
         });
         
         btn.style.display = 'block';
+        btn.disabled = false;
         showProcessing(false);
     } catch (error) {
+        if (requestId !== quickLoadRequestId) return;
         showProcessing(false);
         console.error('Error:', error);
-        container.innerHTML = '<p style="color: #e74c3c;">Error loading data</p>';
+        container.innerHTML = '<p style="color: #e74c3c;">Could not load current stock. Try again.</p><button type="button" class="btn btn-secondary" onclick="updateQuickLoadList()">Retry stock list</button>';
         btn.style.display = 'none';
     }
 }
