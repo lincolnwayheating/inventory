@@ -215,6 +215,10 @@
                 </div>
             </div>
             
+            <div id="quickLoadStaleNotice" role="status" style="display: none; margin-bottom: 12px; padding: 12px; background: #fff3cd; border-radius: 8px;">
+                Stock changed. Refresh this list before loading parts.
+                <button type="button" class="btn btn-secondary" id="quickLoadRefreshBtn">Refresh stock list</button>
+            </div>
             <div id="quickLoadList"></div>
             <button class="btn btn-primary" id="quickLoadBtn" style="display: none; margin-top: 20px;">Load Selected Items</button>
         </div>
@@ -408,7 +412,7 @@
 </div>
 
 <script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
-<script src="script.js?v=26"></script>
+<script src="script.js?v=27"></script>
 
 </body>
 </html>

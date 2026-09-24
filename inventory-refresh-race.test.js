@@ -86,3 +86,31 @@ test('a scheduled background refresh skips a stock POST still in flight', async 
     resolvePost({ ok: true, json: async () => ({ success: true }) });
     await pending;
 });
+
+test('a relevant truck stock change invalidates a held-open Quick Load list', async () => {
+    const { ctx, resolveRead } = setup();
+    let marks = 0;
+    ctx.document = {
+        querySelector: () => ({ id: 'quick-load' }),
+        getElementById: () => ({ value: 'maverick' })
+    };
+    ctx.markQuickLoadListStale = () => { marks++; };
+    const pending = ctx.refreshQuantitiesOnly();
+    resolveRead(7);
+    await pending;
+    assert.equal(marks, 1);
+});
+
+test('unchanged stock keeps the held-open Quick Load list usable', async () => {
+    const { ctx, resolveRead } = setup();
+    let marks = 0;
+    ctx.document = {
+        querySelector: () => ({ id: 'quick-load' }),
+        getElementById: () => ({ value: 'maverick' })
+    };
+    ctx.markQuickLoadListStale = () => { marks++; };
+    const pending = ctx.refreshQuantitiesOnly();
+    resolveRead(5);
+    await pending;
+    assert.equal(marks, 0);
+});

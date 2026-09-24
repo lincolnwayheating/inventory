@@ -64,3 +64,53 @@ test('an older truck response cannot overwrite a newer Quick Load error', async 
     assert.match(elements.quickLoadList.innerHTML, /Could not load current stock/);
     assert.equal(elements.quickLoadBtn.disabled, true);
 });
+
+test('stock changing during a Quick Load read preserves selections but disables loading', async () => {
+    let resolveRead;
+    let processing = true;
+    const elements = {
+        quickLoadList: { innerHTML: 'Previously selected parts' },
+        quickLoadBtn: { style: { display: 'block' }, disabled: false },
+        quickLoadLocation: { value: 'maverick' },
+        quickLoadStaleNotice: { style: { display: 'none' } }
+    };
+    const ctx = context({
+        document: { getElementById: id => elements[id] },
+        settings: {}, inventory: {},
+        showProcessing: show => { processing = show; },
+        fetch: async () => { throw Error('unused'); }
+    });
+    vm.runInContext(quickLoadSource, ctx);
+    ctx.readLowStockItems = () => new Promise(resolve => { resolveRead = resolve; });
+    const pending = ctx.updateQuickLoadList();
+    ctx.markQuickLoadListStale();
+    resolveRead({ success: true, data: { shop: [], trucks: { maverick: [] } } });
+    await pending;
+    assert.equal(elements.quickLoadList.innerHTML, 'Previously selected parts');
+    assert.equal(elements.quickLoadStaleNotice.style.display, 'block');
+    assert.equal(elements.quickLoadBtn.disabled, true);
+    assert.equal(processing, false);
+});
+
+test('unknown low-stock part asks for a full refresh instead of claiming all stocked', async () => {
+    const elements = {
+        quickLoadList: { innerHTML: '' },
+        quickLoadBtn: { style: { display: '' }, disabled: false },
+        quickLoadLocation: { value: 'maverick' },
+        quickLoadStaleNotice: { style: { display: 'none' } }
+    };
+    const ctx = context({
+        document: { getElementById: id => elements[id] },
+        settings: {}, inventory: {},
+        showProcessing: () => {}, console: { error: () => {} },
+        fetch: async () => { throw Error('unused'); }
+    });
+    vm.runInContext(quickLoadSource, ctx);
+    ctx.readLowStockItems = async () => ({ success: true, data: { shop: [], trucks: {
+        maverick: [{ id: 'new-part', current: 0, minimum: 1, needed: 1, shopQty: 1 }]
+    } } });
+    await ctx.updateQuickLoadList();
+    assert.match(elements.quickLoadList.innerHTML, /refresh all inventory/);
+    assert.doesNotMatch(elements.quickLoadList.innerHTML, /All items fully stocked/);
+    assert.equal(elements.quickLoadBtn.disabled, true);
+});

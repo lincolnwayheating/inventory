@@ -777,10 +777,17 @@ async function refreshQuantitiesOnly() {
         
         {
             const headers = validateInventoryRows(result.data);
+            const activeTab = document.querySelector('.content.active');
+            const quickLoadLocation = activeTab?.id === 'quick-load' ? document.getElementById('quickLoadLocation').value : '';
+            let quickLoadChanged = false;
             
             for (let i = 1; i < result.data.length; i++) {
                 const row = result.data[i];
                 const partId = row[0];
+                if (partId && quickLoadLocation &&
+                    (!inventory[partId] || quickLoadRelevantChange(inventory[partId], row, headers, quickLoadLocation))) {
+                    quickLoadChanged = true;
+                }
                 
                 if (partId && inventory[partId]) {
                     inventory[partId].shop = parseInt(row[5]) || 0;
@@ -807,6 +814,7 @@ async function refreshQuantitiesOnly() {
             }
             
             consecutiveRefreshErrors = 0;
+            if (quickLoadChanged) markQuickLoadListStale();
         }
         
         const activeTab = document.querySelector('.content.active');
@@ -818,7 +826,7 @@ async function refreshQuantitiesOnly() {
             } else if (tabId === 'all-parts') {
                 updatePartsGridQuantitiesOnly();
             }
-            // NOTE: Quick Load page is NOT auto-refreshed to preserve user selections
+            // Quick Load retains selections but blocks loading when its stock changes.
         }
         
     } catch (error) {
@@ -827,6 +835,18 @@ async function refreshQuantitiesOnly() {
     } finally {
         backgroundInventoryReadInFlight = false;
     }
+}
+
+function quickLoadRelevantChange(part, row, headers, location) {
+    if (part.shop !== (parseInt(row[5]) || 0)) return true;
+    if (location === 'shop') {
+        const minIndex = headers.indexOf('MinStock');
+        return minIndex !== -1 && part.minStock !== (parseInt(row[minIndex]) || 0);
+    }
+    const stockIndex = headers.indexOf(location);
+    const minIndex = headers.indexOf('MinTruck-' + location);
+    return (stockIndex !== -1 && part[location] !== (parseInt(row[stockIndex]) || 0)) ||
+        (minIndex !== -1 && part['minTruck_' + location] !== (parseInt(row[minIndex]) || 0));
 }
 
 function updateDashboardQuantitiesOnly() {
@@ -1271,6 +1291,7 @@ function setupEventListeners() {
     
     document.getElementById('quickLoadBtn')?.addEventListener('click', processQuickLoad);
     document.getElementById('quickLoadLocation')?.addEventListener('change', updateQuickLoadList);
+    document.getElementById('quickLoadRefreshBtn')?.addEventListener('click', updateQuickLoadList);
     
     document.getElementById('saveSeasonsBtn')?.addEventListener('click', saveActiveSeasons);
     document.getElementById('changePinBtn')?.addEventListener('click', changePIN);
@@ -3469,6 +3490,15 @@ async function deleteUser(pin) {
 // ============================================
 
 let quickLoadRequestId = 0;
+let quickLoadRevision = 0;
+
+function markQuickLoadListStale() {
+    quickLoadRevision++;
+    const notice = document.getElementById('quickLoadStaleNotice');
+    if (notice) notice.style.display = 'block';
+    const button = document.getElementById('quickLoadBtn');
+    if (button) button.disabled = true;
+}
 
 async function readLowStockItems(location) {
     let lastError;
@@ -3503,10 +3533,13 @@ async function readLowStockItems(location) {
 
 async function updateQuickLoadList() {
     const requestId = ++quickLoadRequestId;
+    const stockRevision = quickLoadRevision;
     const container = document.getElementById('quickLoadList');
     const btn = document.getElementById('quickLoadBtn');
+    const staleNotice = document.getElementById('quickLoadStaleNotice');
     const location = document.getElementById('quickLoadLocation').value;
     btn.disabled = true;
+    if (staleNotice) staleNotice.style.display = 'none';
     
     if (!location) {
         container.innerHTML = '<p style="color: #666;">Select a location</p>';
@@ -3522,8 +3555,13 @@ async function updateQuickLoadList() {
     try {
         const result = await readLowStockItems(location);
         if (requestId !== quickLoadRequestId) return;
+        if (stockRevision !== quickLoadRevision) {
+            showProcessing(false);
+            return;
+        }
         
         let items = location === 'shop' ? result.data.shop : (result.data.trucks[location] || []);
+        if (items.some(item => !inventory[item.id])) throw new Error('Quick Load part details changed');
         
         items = items.filter(item => {
             const part = inventory[item.id];
@@ -3576,9 +3614,15 @@ async function updateQuickLoadList() {
         showProcessing(false);
     } catch (error) {
         if (requestId !== quickLoadRequestId) return;
+        if (stockRevision !== quickLoadRevision) {
+            showProcessing(false);
+            return;
+        }
         showProcessing(false);
         console.error('Error:', error);
-        container.innerHTML = '<p style="color: #e74c3c;">Could not load current stock. Try again.</p><button type="button" class="btn btn-secondary" onclick="updateQuickLoadList()">Retry stock list</button>';
+        container.innerHTML = error.message === 'Quick Load part details changed' ?
+            '<p style="color: #e74c3c;">A new part was added. Tap the ↻ button at the top to refresh all inventory.</p>' :
+            '<p style="color: #e74c3c;">Could not load current stock. Try again.</p><button type="button" class="btn btn-secondary" onclick="updateQuickLoadList()">Retry stock list</button>';
         btn.style.display = 'none';
     }
 }
