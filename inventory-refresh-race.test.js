@@ -12,6 +12,10 @@ const saveStart = source.indexOf('async function requireStockSaveSuccess(');
 const saveEnd = source.indexOf('function stockSaveErrorMessage(', saveStart);
 assert.ok(saveStart >= 0 && saveEnd > saveStart);
 const saveSource = source.slice(saveStart, saveEnd);
+const movementStart = source.indexOf('function guardedStockRequest(');
+const movementEnd = source.indexOf('async function saveStockMovement(', movementStart);
+assert.ok(movementStart >= 0 && movementEnd > movementStart);
+const movementSource = source.slice(movementStart, movementEnd);
 const headers = ['PartNumber', 'Name', 'Category', 'Barcode', 'Image', 'shop', 'maverick', 'MinStock', 'MinTruck-maverick'];
 
 function setup() {
@@ -25,6 +29,9 @@ function setup() {
         trucks: { maverick: {} },
         document: { querySelector: () => null },
         autoRefreshTimer: null,
+        SCRIPT_URL: 'https://invented.example/exec',
+        crypto: require('node:crypto').webcrypto,
+        AbortController, setTimeout, clearTimeout,
         console
     });
     vm.runInContext(refreshSource, ctx);
@@ -55,4 +62,27 @@ test('a confirmed local stock change invalidates an older background response', 
     resolveRead(4);
     await pending;
     assert.equal(ctx.inventory.P.shop, 6);
+});
+
+test('beginning a stock move invalidates a read that returns during the move', async () => {
+    const { ctx, resolveRead } = setup();
+    vm.runInContext(movementSource, ctx);
+    const pending = ctx.refreshQuantitiesOnly();
+    const request = ctx.stockMovementRequest('P', ctx.inventory.P, { shop: 4 }, {});
+    assert.equal(request.expected.shop, 5);
+    resolveRead(4); // Server read sees the move before its POST reply arrives.
+    await pending;
+    assert.equal(ctx.inventory.P.shop, 5);
+});
+
+test('a scheduled background refresh skips a stock POST still in flight', async () => {
+    const { ctx, readCount } = setup();
+    vm.runInContext(movementSource, ctx);
+    let resolvePost;
+    ctx.fetch = () => new Promise(resolve => { resolvePost = resolve; });
+    const pending = ctx.postStockMovement({ action: 'moveStockWithHistory', operationId: 'invented' });
+    await ctx.refreshQuantitiesOnly();
+    assert.equal(readCount(), 0);
+    resolvePost({ ok: true, json: async () => ({ success: true }) });
+    await pending;
 });

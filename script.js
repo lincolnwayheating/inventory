@@ -747,9 +747,10 @@ let consecutiveRefreshErrors = 0;
 const MAX_ERRORS_BEFORE_PAUSE = 3;
 let inventoryReadEpoch = 0;
 let backgroundInventoryReadInFlight = false;
+let stockPostInFlight = 0;
 
 async function refreshQuantitiesOnly() {
-    if (backgroundInventoryReadInFlight) return;
+    if (backgroundInventoryReadInFlight || stockPostInFlight) return;
     backgroundInventoryReadInFlight = true;
     const readEpoch = inventoryReadEpoch;
     try {
@@ -1434,34 +1435,42 @@ function guardedStockRequest(partId, part, updates) {
 }
 
 function stockMovementRequest(partId, part, updates, transaction) {
+    const guarded = guardedStockRequest(partId, part, updates);
+    // A background GET started before this move must not overwrite its result.
+    inventoryReadEpoch++;
     const bytes = crypto.getRandomValues(new Uint8Array(16));
     const operationId = 'hh-' + Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-    return {...guardedStockRequest(partId, part, updates), action: 'moveStockWithHistory', operationId, transaction};
+    return {...guarded, action: 'moveStockWithHistory', operationId, transaction};
 }
 
 async function postStockMovement(request) {
-    // The same ID makes a retry safe if Apps Script commits but its reply is lost.
-    for (let attempt = 0; attempt < 2; attempt++) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 30000);
-        try {
-            const response = await fetch(SCRIPT_URL, {
-                method: 'POST', headers: {'Content-Type': 'text/plain'},
-                body: JSON.stringify(request), signal: controller.signal
-            });
-            if (response.ok) {
-                const result = await response.json();
-                if (result && (result.success === true || result.code === 'stock_changed' || result.code === 'save_failed')) {
-                    return {ok: true, json: async () => result};
+    stockPostInFlight++;
+    try {
+        // The same ID makes a retry safe if Apps Script commits but its reply is lost.
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 30000);
+            try {
+                const response = await fetch(SCRIPT_URL, {
+                    method: 'POST', headers: {'Content-Type': 'text/plain'},
+                    body: JSON.stringify(request), signal: controller.signal
+                });
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result && (result.success === true || result.code === 'stock_changed' || result.code === 'save_failed')) {
+                        return {ok: true, json: async () => result};
+                    }
                 }
+            } catch (error) {
+                console.warn('Movement response unavailable; retrying same operation ID', error);
+            } finally {
+                clearTimeout(timeout);
             }
-        } catch (error) {
-            console.warn('Movement response unavailable; retrying same operation ID', error);
-        } finally {
-            clearTimeout(timeout);
         }
+        throw uncertainStockSaveError();
+    } finally {
+        stockPostInFlight--;
     }
-    throw uncertainStockSaveError();
 }
 
 async function saveStockMovement(partId, part, updates, transaction) {
