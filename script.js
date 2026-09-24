@@ -748,6 +748,7 @@ const MAX_ERRORS_BEFORE_PAUSE = 3;
 let inventoryReadEpoch = 0;
 let backgroundInventoryReadInFlight = false;
 let stockPostInFlight = 0;
+let activePartDetailId = null;
 
 async function refreshQuantitiesOnly() {
     if (backgroundInventoryReadInFlight || stockPostInFlight) return;
@@ -779,7 +780,9 @@ async function refreshQuantitiesOnly() {
             const headers = validateInventoryRows(result.data);
             const activeTab = document.querySelector('.content.active');
             const quickLoadLocation = activeTab?.id === 'quick-load' ? document.getElementById('quickLoadLocation').value : '';
+            const detailOpen = document.getElementById?.('partDetailModal')?.classList?.contains('show');
             let quickLoadChanged = false;
+            let partDetailChanged = false;
             
             for (let i = 1; i < result.data.length; i++) {
                 const row = result.data[i];
@@ -787,6 +790,11 @@ async function refreshQuantitiesOnly() {
                 if (partId && quickLoadLocation &&
                     (!inventory[partId] || quickLoadRelevantChange(inventory[partId], row, headers, quickLoadLocation))) {
                     quickLoadChanged = true;
+                }
+                if (partId && detailOpen && partId === activePartDetailId && inventory[partId] &&
+                    (quickLoadRelevantChange(inventory[partId], row, headers, 'shop') ||
+                    visibleLocationIds().some(id => quickLoadRelevantChange(inventory[partId], row, headers, id)))) {
+                    partDetailChanged = true;
                 }
                 
                 if (partId && inventory[partId]) {
@@ -815,6 +823,7 @@ async function refreshQuantitiesOnly() {
             
             consecutiveRefreshErrors = 0;
             if (quickLoadChanged) markQuickLoadListStale();
+            if (partDetailChanged) markPartDetailStale();
         }
         
         const activeTab = document.querySelector('.content.active');
@@ -2794,6 +2803,7 @@ function openPartDetail(partId) {
     const part = inventory[partId];
     const modal = document.getElementById('partDetailModal');
     const body = document.getElementById('partDetailBody');
+    activePartDetailId = partId;
     
     document.getElementById('partDetailTitle').textContent = part.name;
     
@@ -2831,13 +2841,15 @@ function openPartDetail(partId) {
     
     const trucksWithPart = visibleVehicleIds().filter(id => part[id] > 0);
     
-    if (trucksWithPart.length > 0) {
-        useOnJobHTML += `
+    if (trucksWithPart.length === 0) {
+        useOnJobHTML += '<p style="text-align: center; color: #666; margin-bottom: 12px;">No trucks have this part in stock</p>';
+    }
+    useOnJobHTML += `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
                 <div>
                     <label style="display: block; margin-bottom: 5px; font-weight: 600;">From Truck</label>
-                    <select id="useJobTruck" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
-                        ${trucksWithPart.map(id => `<option value="${id}" ${id === userTruck ? 'selected' : ''}>${trucks[id].name} (${part[id]} avail)</option>`).join('')}
+                    <select id="useJobTruck" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ddd;" ${trucksWithPart.length ? '' : 'disabled'}>
+                        ${trucksWithPart.length ? trucksWithPart.map(id => `<option value="${id}" ${id === userTruck ? 'selected' : ''}>${trucks[id].name} (${part[id]} avail)</option>`).join('') : '<option value="">No stocked truck</option>'}
                     </select>
                 </div>
                 <div>
@@ -2849,10 +2861,9 @@ function openPartDetail(partId) {
                 <label style="display: block; margin-bottom: 5px; font-weight: 600;">Job Name / Address</label>
                 <input type="text" id="useJobName" placeholder="e.g., 123 Main St or Smith Residence" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ddd;">
             </div>
-            <button class="btn btn-primary" onclick="quickUseOnJob('${partId}')" style="width: 100%;">🔧 Use Part on Job</button>
         `;
-    } else {
-        useOnJobHTML += '<p style="text-align: center; color: #666;">No trucks have this part in stock</p>';
+    if (trucksWithPart.length > 0) {
+        useOnJobHTML += `<button class="btn btn-primary" onclick="quickUseOnJob('${partId}')" style="width: 100%;">🔧 Use Part on Job</button>`;
     }
     useOnJobHTML += '</div>';
     
@@ -2895,8 +2906,38 @@ function openPartDetail(partId) {
     modal.classList.add('show');
 }
 
+function markPartDetailStale() {
+    const body = document.getElementById('partDetailBody');
+    if (!body || body.querySelector('#partDetailStaleNotice')) return;
+    body.querySelectorAll('button').forEach(button => { button.disabled = true; });
+    const notice = document.createElement('div');
+    notice.id = 'partDetailStaleNotice';
+    notice.style.cssText = 'padding:12px;margin-bottom:16px;border-radius:8px;background:#fff3cd;color:#664d03';
+    notice.append('Stock changed while this part was open. Refresh its details before making a change. ');
+    const refresh = document.createElement('button');
+    refresh.type = 'button';
+    refresh.className = 'btn btn-primary';
+    refresh.textContent = 'Refresh part details';
+    refresh.addEventListener('click', () => {
+        if (!activePartDetailId) return;
+        const oldTruck = document.getElementById('useJobTruck')?.value;
+        const oldQty = document.getElementById('useJobQty')?.value;
+        const oldJob = document.getElementById('useJobName')?.value;
+        openPartDetail(activePartDetailId);
+        const truck = document.getElementById('useJobTruck');
+        if (truck && [...truck.options].some(option => option.value === oldTruck)) truck.value = oldTruck;
+        const qty = document.getElementById('useJobQty');
+        if (qty && oldQty) qty.value = oldQty;
+        const job = document.getElementById('useJobName');
+        if (job) job.value = oldJob || '';
+    });
+    notice.append(refresh);
+    body.prepend(notice);
+}
+
 function closePartDetailModal() {
     document.getElementById('partDetailModal').classList.remove('show');
+    activePartDetailId = null;
 }
 
 // ============================================

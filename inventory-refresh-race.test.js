@@ -16,6 +16,13 @@ const movementStart = source.indexOf('function guardedStockRequest(');
 const movementEnd = source.indexOf('async function saveStockMovement(', movementStart);
 assert.ok(movementStart >= 0 && movementEnd > movementStart);
 const movementSource = source.slice(movementStart, movementEnd);
+const staleStart = source.indexOf('function markPartDetailStale()');
+const staleEnd = source.indexOf('function closePartDetailModal()', staleStart);
+assert.ok(staleStart >= 0 && staleEnd > staleStart);
+const staleSource = source.slice(staleStart, staleEnd);
+const detailStart = source.indexOf('function openPartDetail(partId)');
+assert.ok(detailStart >= 0 && staleStart > detailStart);
+const detailSource = source.slice(detailStart, staleStart);
 const headers = ['PartNumber', 'Name', 'Category', 'Barcode', 'Image', 'shop', 'maverick', 'MinStock', 'MinTruck-maverick'];
 
 function setup() {
@@ -36,7 +43,7 @@ function setup() {
     });
     vm.runInContext(refreshSource, ctx);
     return {
-        ctx, resolveRead: shop => resolveRead({ data: [headers, ['P', '', '', '', '', shop, 1, 2, 2]] }),
+        ctx, resolveRead: (shop, truck = 1) => resolveRead({ data: [headers, ['P', '', '', '', '', shop, truck, 2, 2]] }),
         readCount: () => reads
     };
 }
@@ -113,4 +120,122 @@ test('unchanged stock keeps the held-open Quick Load list usable', async () => {
     resolveRead(5);
     await pending;
     assert.equal(marks, 0);
+});
+
+test('a background stock change marks an open part detail stale', async () => {
+    const { ctx, resolveRead } = setup();
+    let marks = 0;
+    ctx.document = {
+        querySelector: () => ({ id: 'all-parts' }),
+        getElementById: () => ({ classList: { contains: () => true } })
+    };
+    ctx.visibleLocationIds = () => ['maverick'];
+    ctx.markPartDetailStale = () => { marks++; };
+    ctx.updatePartsGridQuantitiesOnly = () => {};
+    vm.runInContext("activePartDetailId = 'P'", ctx);
+    const pending = ctx.refreshQuantitiesOnly();
+    resolveRead(7);
+    await pending;
+    assert.equal(marks, 1);
+});
+
+test('unchanged stock leaves an open part detail usable', async () => {
+    const { ctx, resolveRead } = setup();
+    let marks = 0;
+    ctx.document = {
+        querySelector: () => ({ id: 'all-parts' }),
+        getElementById: () => ({ classList: { contains: () => true } })
+    };
+    ctx.visibleLocationIds = () => ['maverick'];
+    ctx.markPartDetailStale = () => { marks++; };
+    ctx.updatePartsGridQuantitiesOnly = () => {};
+    vm.runInContext("activePartDetailId = 'P'", ctx);
+    const pending = ctx.refreshQuantitiesOnly();
+    resolveRead(5);
+    await pending;
+    assert.equal(marks, 0);
+});
+
+test('a truck-only stock change also marks an open part detail stale', async () => {
+    const { ctx, resolveRead } = setup();
+    let marks = 0;
+    ctx.document = {
+        querySelector: () => ({ id: 'all-parts' }),
+        getElementById: () => ({ classList: { contains: () => true } })
+    };
+    ctx.visibleLocationIds = () => ['maverick'];
+    ctx.markPartDetailStale = () => { marks++; };
+    ctx.updatePartsGridQuantitiesOnly = () => {};
+    vm.runInContext("activePartDetailId = 'P'", ctx);
+    const pending = ctx.refreshQuantitiesOnly();
+    resolveRead(5, 3);
+    await pending;
+    assert.equal(marks, 1);
+});
+
+test('the stale part notice disables actions and refreshes without losing job text', () => {
+    const actions = [{ disabled: false }, { disabled: false }];
+    let notice;
+    let refreshedPart;
+    let current = {
+        useJobTruck: { value: 'maverick' },
+        useJobQty: { value: '2' },
+        useJobName: { value: 'Invented test job' }
+    };
+    const body = {
+        querySelector: () => null,
+        querySelectorAll: () => actions,
+        prepend: element => { notice = element; }
+    };
+    const ctx = vm.createContext({
+        document: {
+            getElementById: id => id === 'partDetailBody' ? body : current[id],
+            createElement: tag => ({
+                tag, style: {}, children: [], append(...items) { this.children.push(...items); },
+                addEventListener(event, callback) { this[event] = callback; }
+            })
+        },
+        openPartDetail: partId => {
+            refreshedPart = partId;
+            current = {
+                useJobTruck: { value: 'other', options: [{ value: 'maverick' }, { value: 'other' }] },
+                useJobQty: { value: '1' },
+                useJobName: { value: '' }
+            };
+        }
+    });
+    vm.runInContext("let activePartDetailId = 'P';" + staleSource, ctx);
+    ctx.markPartDetailStale();
+    assert.ok(actions.every(button => button.disabled));
+    assert.equal(notice.id, 'partDetailStaleNotice');
+    const refreshButton = notice.children[1];
+    refreshButton.click();
+    assert.equal(refreshedPart, 'P');
+    assert.equal(current.useJobTruck.value, 'maverick');
+    assert.equal(current.useJobQty.value, '2');
+    assert.equal(current.useJobName.value, 'Invented test job');
+});
+
+test('part detail retains job fields when the last truck goes out of stock', () => {
+    const body = { innerHTML: '' };
+    const modal = { classList: { add() {} } };
+    const title = { textContent: '' };
+    const ctx = vm.createContext({
+        inventory: { P: { id: 'P', name: 'Invented part', category: 'parts', barcode: '',
+            imageUrl: '', shop: 2, minStock: 0, maverick: 0, minTruck_maverick: 1,
+            season: 'heating', price: 0, pretaxPrice: 0, purchaseLink: '' } },
+        trucks: { maverick: { name: 'Maverick' } },
+        categories: { parts: { name: 'Parts' } },
+        userTruck: 'maverick',
+        visibleLocationIds: () => ['maverick'],
+        visibleVehicleIds: () => ['maverick'],
+        historyLoaded: false,
+        document: { getElementById: id => ({ partDetailBody: body, partDetailModal: modal,
+            partDetailTitle: title })[id] }
+    });
+    vm.runInContext('let activePartDetailId = null;' + detailSource, ctx);
+    ctx.openPartDetail('P');
+    assert.match(body.innerHTML, /id="useJobName"/);
+    assert.match(body.innerHTML, /No trucks have this part in stock/);
+    assert.doesNotMatch(body.innerHTML, /onclick="quickUseOnJob/);
 });
