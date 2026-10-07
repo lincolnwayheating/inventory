@@ -147,6 +147,164 @@ async function processTransactionQueue() {
     saveTransactionQueue(remainingQueue);
 }
 
+// Durable identity for an uncertain stock save. Status checks never replay stock.
+const STOCK_INTENT_KEY = 'hvac_stock_intent_v1';
+let stockCountsFresh = false;
+let verifiedRecoveryOperationId = null;
+async function withStockMovementLock(fn) {
+    if (!navigator.locks || typeof navigator.locks.request !== 'function') throw recoveryStockError('This browser cannot safely save stock. Open inventory in an updated supported browser.');
+    return navigator.locks.request('hvac-inventory-stock-save-v1', {ifAvailable: true}, async lock => {
+        if (!lock) throw recoveryStockError('Another inventory tab is saving stock. Wait for it to finish before trying again.');
+        return fn();
+    });
+}
+function inventoryNotice(id, message, recover = false) {
+    const node = document.getElementById(id);
+    if (!node) return;
+    node.textContent = message;
+    node.hidden = !message;
+    if (recover && message) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.textContent = 'Check save status';
+        button.className = 'btn btn-secondary';
+        button.onclick = async () => { await reconcilePendingMovement(); updateDashboard(); };
+        node.appendChild(button);
+        if (verifiedRecoveryOperationId) {
+            const complete = document.createElement('button');
+            complete.type = 'button'; complete.textContent = 'Complete this recorded save';
+            complete.className = 'btn btn-secondary'; complete.onclick = completeRecordedStockSave;
+            node.appendChild(complete);
+        }
+    }
+}
+function readStockIntent() {
+    const raw = localStorage.getItem(STOCK_INTENT_KEY);
+    if (!raw) return null;
+    const intent = JSON.parse(raw);
+    if (!intent || intent.version !== 1 || !intent.request ||
+        !/^hh-[a-f0-9]{32}$/.test(intent.request.operationId) ||
+        typeof intent.request.partId !== 'string' || !intent.request.expected || !intent.request.updates || !intent.request.transaction) {
+        throw new Error('Saved stock operation needs reconciliation.');
+    }
+    return intent;
+}
+function recoveryStockError(message) {
+    const error = new Error(message);
+    error.stockSaveMessage = message;
+    inventoryNotice('stockRecoveryNotice', message, true);
+    return error;
+}
+function persistStockIntent(request) {
+    const intent = {version: 1, request, createdAt: Date.now()};
+    localStorage.setItem(STOCK_INTENT_KEY, JSON.stringify(intent));
+    if (localStorage.getItem(STOCK_INTENT_KEY) !== JSON.stringify(intent)) throw new Error('Stock save recovery storage unavailable.');
+}
+function clearStockIntent(operationId) {
+    const existing = readStockIntent();
+    if (!existing || existing.request.operationId !== operationId) throw new Error('Saved stock operation changed.');
+    localStorage.removeItem(STOCK_INTENT_KEY);
+    if (localStorage.getItem(STOCK_INTENT_KEY) !== null) throw new Error('Could not clear confirmed stock operation.');
+}
+function applyAuthoritativeStock(result, request) {
+    if (!result || result.operationId !== request.operationId || result.partId !== request.partId ||
+        !result.current || Array.isArray(result.current) ||
+        Object.keys(request.updates).some(key => !Number.isSafeInteger(result.current[key]) || result.current[key] < 0) ||
+        Object.keys(result.current).some(key => key !== 'shop' && !Object.prototype.hasOwnProperty.call(trucks, key))) {
+        throw uncertainStockSaveError();
+    }
+    if (Object.values(result.current).some(value => !Number.isSafeInteger(value) || value < 0)) throw uncertainStockSaveError();
+    const part = inventory[request.partId];
+    const changedColumns = part ? Object.keys(result.current).filter(key => part[key] !== result.current[key]) : [];
+    if (part) Object.assign(part, result.current);
+    inventoryReadEpoch++;
+    if (changedColumns.length) refreshVisibleStockSurfaces(request.partId, changedColumns);
+}
+function refreshVisibleStockSurfaces(partId, changedColumns) {
+    // Update existing cards in place; retain the selected category/search and forms.
+    updatePartsGridQuantitiesOnly();
+    if (document.querySelector('.content.active')?.id === 'dashboard') updateDashboardQuantitiesOnly();
+    const quickLocation = document.getElementById('quickLoadLocation')?.value;
+    if (quickLocation && changedColumns.some(key => key === 'shop' || key === quickLocation)) markQuickLoadListStale();
+    if (activePartDetailId === partId && document.getElementById('partDetailModal')?.classList.contains('show')) {
+        const part = inventory[partId];
+        document.getElementById('partDetailBody')?.querySelectorAll('[data-stock-location]').forEach(badge => {
+            const location = badge.getAttribute('data-stock-location');
+            const minimum = location === 'shop' ? part.minStock || 0 : part['minTruck_' + location] || 0;
+            const label = location === 'shop' ? 'Shop' : trucks[location]?.name;
+            badge.textContent = `${label}: ${part[location]} (Min: ${minimum})`;
+            badge.className = 'stock-badge ' + (part[location] < minimum ? 'stock-low' : 'stock-ok');
+        });
+        // Existing refresh control preserves the draft job, quantity and truck.
+        markPartDetailStale();
+    }
+}
+async function readInventoryObject(action, params = {}) {
+    let lastError;
+    for (const milliseconds of [30000, 70000]) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), milliseconds);
+        try {
+            const query = new URLSearchParams({action, ...params, retry: String(Date.now())});
+            const response = action === 'getStockOperationStatus' ?
+                await fetch(SCRIPT_URL, {method: 'POST', headers: {'Content-Type': 'text/plain'}, body: JSON.stringify({action, ...params}), signal: controller.signal, cache: 'no-store'}) :
+                await fetch(SCRIPT_URL + '?' + query, {signal: controller.signal, cache: 'no-store'});
+            if (!response.ok) throw new Error('Inventory connection unavailable');
+            const result = await response.json();
+            if (!result || result.success !== true) throw new Error(result?.error || 'Inventory response unavailable');
+            return result;
+        } catch (error) { lastError = error; }
+        finally { clearTimeout(timer); }
+    }
+    throw lastError;
+}
+async function reconcilePendingMovement() {
+    try { return await withStockMovementLock(reconcilePendingMovementUnlocked); }
+    catch (error) { inventoryNotice('stockRecoveryNotice', error.stockSaveMessage || error.message, true); return false; }
+}
+async function reconcilePendingMovementUnlocked() {
+    let intent;
+    try {
+        verifiedRecoveryOperationId = null;
+        intent = readStockIntent();
+        if (!intent) return true;
+        inventoryNotice('stockRecoveryNotice', 'Checking the previous stock save. New movements are paused.', true);
+        const request = intent.request;
+        const fingerprint = JSON.stringify({partId: request.partId, expected: request.expected, updates: request.updates, transaction: request.transaction});
+        const result = await readInventoryObject('getStockOperationStatus', {operationId: request.operationId, fingerprint});
+        if (result.operationId !== request.operationId || result.partId !== request.partId) throw new Error('Stock operation identity changed.');
+        if (result.state !== 'committed') {
+            if (result.state === 'pending' || result.state === 'not_found') verifiedRecoveryOperationId = request.operationId;
+            const tx = request.transaction;
+            throw recoveryStockError(`Recorded save: ${tx.action}, ${request.partId}, quantity ${tx.quantity}, ${tx.from} → ${tx.to}. It is not confirmed. Review stock and History, then complete this same recorded save only if needed. No stock was retried.`);
+        }
+        applyAuthoritativeStock(result, request);
+        clearStockIntent(request.operationId);
+        verifiedRecoveryOperationId = null;
+        inventoryNotice('stockRecoveryNotice', 'Previous stock save confirmed. It was counted once. Do not repeat the same physical movement.');
+        return true;
+    } catch (error) {
+        inventoryNotice('stockRecoveryNotice', error.stockSaveMessage || 'Previous stock save could not be verified. New movements are paused. Check save status when connected.', true);
+        return false;
+    }
+}
+async function loadInventoryBootstrap() {
+    const readEpoch = ++inventoryReadEpoch;
+    const result = await readInventoryObject('readBootstrap');
+    const data = result.data;
+    if (!data || ['inventory','categories','trucks','settings'].some(key => !Array.isArray(data[key]) || !data[key].length || data[key].some(row => !Array.isArray(row)))) throw new Error('Inventory startup data incomplete');
+    return {...data, readEpoch};
+}
+async function completeRecordedStockSave() {
+    try {
+        const intent = readStockIntent();
+        if (!intent || intent.request.operationId !== verifiedRecoveryOperationId) throw recoveryStockError('Check save status again before completing this operation.');
+        await requireStockSaveSuccess(await postStockMovement(intent.request, true));
+        inventoryNotice('stockRecoveryNotice', 'Recorded stock save confirmed. Do not repeat the same physical movement.');
+        updateDashboard();
+        showToast('Recorded stock save confirmed.');
+    } catch (error) { showToast(stockSaveErrorMessage(error, 'Recorded save remains unconfirmed'), 'error'); }
+}
+
 // ============================================
 // LOCATION TRACKING
 // ============================================
@@ -566,8 +724,10 @@ async function init() {
     showProcessing(true);
     
     try {
-        await loadStaticData();
-        await loadInventoryQuantities();
+        const bootstrap = await loadInventoryBootstrap();
+        await loadStaticData(bootstrap);
+        await loadInventoryQuantities(bootstrap.inventory, bootstrap.readEpoch);
+        await reconcilePendingMovement();
         // History NOT loaded here - lazy loaded when tab clicked
         
         buildTabs();
@@ -584,6 +744,8 @@ async function init() {
     } catch (error) {
         showProcessing(false);
         console.error('Init error:', error);
+        stockCountsFresh = false;
+        inventoryNotice('stockConnectionNotice', 'Inventory connection unavailable. Try signing in again.');
         if (error.message === 'Inventory columns changed') localStorage.removeItem('cache_locations_v3');
         document.getElementById('appContainer').style.display = 'none';
         document.getElementById('loginScreen').style.display = 'flex';
@@ -600,19 +762,19 @@ async function init() {
 // Load static data with caching and parallel requests
 // ============================================
 
-async function loadStaticData() {
+async function loadStaticData(bootstrap) {
     const cachedSettings = getCachedData('cache_settings');
     const cachedCategories = getCachedData('cache_categories');
     const cachedTrucks = getCachedData('cache_locations_v3');
     
-    if (cachedSettings && cachedCategories && cachedTrucks) {
+    if (!bootstrap && cachedSettings && cachedCategories && cachedTrucks) {
         settings = cachedSettings;
         categories = cachedCategories;
         trucks = cachedTrucks;
         return;
     }
     
-    const [settingsData, categoriesData, trucksData] = await Promise.all([
+    const [settingsData, categoriesData, trucksData] = bootstrap ? ['settings','categories','trucks'].map(key => ({success: true, data: bootstrap[key]})) : await Promise.all([
         readAppRows('readSettings'),
         readAppRows('readCategories'),
         readAppRows('readTrucks')
@@ -664,9 +826,10 @@ async function loadStaticData() {
     }
 }
 
-async function loadInventoryQuantities() {
+async function loadInventoryQuantities(bootstrapRows, bootstrapEpoch) {
+    if (bootstrapRows && bootstrapEpoch !== inventoryReadEpoch) throw new Error('Stock changed during refresh. Refresh current stock again.');
     const readEpoch = ++inventoryReadEpoch;
-    const result = await readAppRows('readInventory');
+    const result = bootstrapRows ? {success: true, data: bootstrapRows} : await readAppRows('readInventory');
     if (readEpoch !== inventoryReadEpoch) return;
     
     {
@@ -740,6 +903,8 @@ async function loadInventoryQuantities() {
             };
         });
         setCachedData('cache_part_details', partDetailsToCache);
+        stockCountsFresh = true;
+        inventoryNotice('stockConnectionNotice', '');
     }
 }
 
@@ -822,6 +987,8 @@ async function refreshQuantitiesOnly() {
             }
             
             consecutiveRefreshErrors = 0;
+            stockCountsFresh = true;
+            inventoryNotice('stockConnectionNotice', '');
             if (quickLoadChanged) markQuickLoadListStale();
             if (partDetailChanged) markPartDetailStale();
         }
@@ -841,6 +1008,8 @@ async function refreshQuantitiesOnly() {
     } catch (error) {
         consecutiveRefreshErrors++;
         console.error('Background refresh error:', error);
+        stockCountsFresh = false;
+        inventoryNotice('stockConnectionNotice', 'Stock could not refresh. Counts shown may be out of date. Tap ↻ to reconnect.');
     } finally {
         backgroundInventoryReadInFlight = false;
     }
@@ -861,93 +1030,47 @@ function quickLoadRelevantChange(part, row, headers, location) {
 function updateDashboardQuantitiesOnly() {
     const container = document.getElementById('lowStockContainer');
     if (!container) return;
-    
     const items = container.querySelectorAll('.low-stock-item');
-    
     items.forEach(item => {
-        const onclickStr = item.getAttribute('onclick');
-        if (onclickStr) {
-            const match = onclickStr.match(/openPartDetail\('([^']+)'\)/);
-            if (match) {
-                const partId = match[1];
-                const part = inventory[partId];
-                
-                if (part) {
-                    const img = item.querySelector('img');
-                    const imgHTML = img ? img.outerHTML : '';
-                    
-                    let truckId = userTruck;
-                    const section = item.closest('.low-stock-section');
-                    if (section) {
-                        const heading = section.querySelector('h3');
-                        if (heading) {
-                            Object.keys(trucks).forEach(id => {
-                                if (heading.textContent.includes(trucks[id].name)) {
-                                    truckId = id;
-                                }
-                            });
-                        }
-                    }
-                    
-                    let currentQty, minQty, needed;
-                    
-                    if (truckId && truckId !== 'shop') {
-                        currentQty = part[truckId];
-                        minQty = part['minTruck_' + truckId] || 0;
-                        needed = minQty - currentQty;
-                    } else {
-                        currentQty = part.shop;
-                        minQty = part.minStock;
-                        needed = minQty - currentQty;
-                    }
-                    
-                    item.innerHTML = `
-                        ${imgHTML}
-                        <strong>${part.name}</strong><br>
-                        <small>Part #: ${part.id}</small><br>
-                        Current: ${currentQty} | Min: ${minQty} | Need: ${needed}
-                    `;
-                    item.onclick = () => openPartDetail(partId);
-                }
-            }
-        }
+        const partId = item.dataset.partId;
+        const truckId = item.dataset.stockLocation;
+        const part = inventory[partId];
+        if (!part || !truckId) return;
+        const img = item.querySelector('img');
+        const imgHTML = img ? img.outerHTML : '';
+        const currentQty = truckId === 'shop' ? part.shop : part[truckId];
+        const minQty = truckId === 'shop' ? part.minStock : part['minTruck_' + truckId] || 0;
+        item.className = 'low-stock-item' + (currentQty === 0 ? ' critical' : '');
+        item.innerHTML = `
+            ${imgHTML}
+            <strong>${part.name}</strong><br>
+            <small>Part #: ${part.id}</small><br>
+            Current: ${currentQty} | Min: ${minQty} | Need: ${minQty - currentQty}
+        `;
     });
-    
-    const currentLowStockCount = container.querySelectorAll('.low-stock-item').length;
-    const actualLowStockCount = getLowStockCount();
-    
-    if (currentLowStockCount !== actualLowStockCount) {
-        updateDashboard();
-    }
+    const activeSeasons = settings.ActiveSeasons ? settings.ActiveSeasons.split(',') : ['heating', 'cooling', 'year-round'];
+    const locations = [...(userTruck && trucks[userTruck] ? [userTruck] : []), ...visibleLocationIds().filter(id => id !== userTruck), 'shop'];
+    const expected = new Set();
+    locations.forEach(location => Object.keys(inventory).forEach(partId => {
+        const part = inventory[partId];
+        const minimum = location === 'shop' ? part.minStock : part['minTruck_' + location] || 0;
+        if (part[location] < minimum && activeSeasons.includes(part.season)) expected.add(JSON.stringify([partId, location]));
+    }));
+    if (items.length !== expected.size || [...items].some(item => !expected.has(JSON.stringify([item.dataset.partId, item.dataset.stockLocation])))) updateDashboard();
 }
 
 function updatePartsGridQuantitiesOnly() {
     const grid = document.getElementById('allPartsGrid');
     if (!grid || grid.style.display === 'none') return;
-    
-    const cards = grid.querySelectorAll('.part-card');
-    
-    cards.forEach(card => {
-        const onclickStr = card.getAttribute('onclick');
-        if (onclickStr) {
-            const match = onclickStr.match(/openPartDetail\('([^']+)'\)/);
-            if (match) {
-                const partId = match[1];
-                const part = inventory[partId];
-                
-                if (part) {
-                    const stockBadge = card.querySelector('.stock-badge');
-                    if (stockBadge) {
-                        let shopStatus = 'stock-ok';
-                        if (part.shop < part.minStock) shopStatus = 'stock-low';
-                        if (part.shop === 0) shopStatus = 'stock-out';
-                        
-                        stockBadge.className = `stock-badge ${shopStatus}`;
-                        stockBadge.textContent = `Shop: ${part.shop}`;
-                    }
-                }
-            }
-        }
+    grid.querySelectorAll('.part-card').forEach(card => {
+        const part = inventory[card.dataset.partId];
+        const stockBadge = card.querySelector('.stock-badge');
+        if (!part || !stockBadge) return;
+        let shopStatus = 'stock-ok';
+        if (part.shop < part.minStock) shopStatus = 'stock-low';
+        if (part.shop === 0) shopStatus = 'stock-out';
+        stockBadge.className = `stock-badge ${shopStatus}`;
+        stockBadge.textContent = `Shop: ${part.shop}`;
     });
 }
 
@@ -998,8 +1121,10 @@ async function refreshData() {
         clearCache();
         historyLoaded = false;
         
-        await loadStaticData();
-        await loadInventoryQuantities();
+        const bootstrap = await loadInventoryBootstrap();
+        await loadStaticData(bootstrap);
+        await loadInventoryQuantities(bootstrap.inventory, bootstrap.readEpoch);
+        await reconcilePendingMovement();
         
         populateDropdowns();
         updateDashboard();
@@ -1022,6 +1147,8 @@ async function refreshData() {
     } catch (error) {
         showProcessing(false);
         console.error('Refresh error:', error);
+        stockCountsFresh = false;
+        inventoryNotice('stockConnectionNotice', 'Stock could not refresh. Counts shown may be out of date. Tap ↻ to reconnect.');
         showToast('Error refreshing data', 'error');
     }
 }
@@ -1465,42 +1592,66 @@ function guardedStockRequest(partId, part, updates) {
 }
 
 function stockMovementRequest(partId, part, updates, transaction) {
-    const guarded = guardedStockRequest(partId, part, updates);
-    // A background GET started before this move must not overwrite its result.
-    inventoryReadEpoch++;
-    const bytes = crypto.getRandomValues(new Uint8Array(16));
-    const operationId = 'hh-' + Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-    return {...guarded, action: 'moveStockWithHistory', operationId, transaction};
+    try {
+        if (readStockIntent()) throw recoveryStockError('A previous stock save needs confirmation. Check save status before another movement.');
+        if (!stockCountsFresh) throw recoveryStockError('Refresh current stock before another movement.');
+        const guarded = guardedStockRequest(partId, part, updates);
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        const operationId = 'hh-' + Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+        const request = {...guarded, action: 'moveStockWithHistory', operationId, transaction};
+        return request;
+    } catch (error) {
+        throw recoveryStockError(error.stockSaveMessage || 'Stock recovery storage unavailable. No movement was sent.');
+    }
 }
 
-async function postStockMovement(request) {
+async function postStockMovement(request, explicitRecovery = false) {
+    return withStockMovementLock(async () => {
+    const stored = readStockIntent();
+    if (stored) {
+        if (!explicitRecovery || stored.request.operationId !== verifiedRecoveryOperationId || JSON.stringify(stored.request) !== JSON.stringify(request)) throw recoveryStockError('A previous stock save needs confirmation. No new movement was sent.');
+    } else {
+        if (explicitRecovery) throw recoveryStockError('Saved stock operation changed. No movement was sent.');
+        try { persistStockIntent(request); } catch (error) { throw recoveryStockError('Stock recovery storage unavailable. No movement was sent.'); }
+    }
+    inventoryReadEpoch++;
     stockPostInFlight++;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
     try {
-        // The same ID makes a retry safe if Apps Script commits but its reply is lost.
-        for (let attempt = 0; attempt < 2; attempt++) {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 30000);
-            try {
-                const response = await fetch(SCRIPT_URL, {
-                    method: 'POST', headers: {'Content-Type': 'text/plain'},
-                    body: JSON.stringify(request), signal: controller.signal
-                });
-                if (response.ok) {
-                    const result = await response.json();
-                    if (result && (result.success === true || result.code === 'stock_changed' || result.code === 'save_failed')) {
-                        return {ok: true, json: async () => result};
-                    }
-                }
-            } catch (error) {
-                console.warn('Movement response unavailable; retrying same operation ID', error);
-            } finally {
-                clearTimeout(timeout);
+        const response = await fetch(SCRIPT_URL, {
+            method: 'POST', headers: {'Content-Type': 'text/plain'},
+            body: JSON.stringify(request), signal: controller.signal
+        });
+        if (!response.ok) throw uncertainStockSaveError();
+        const result = await response.json();
+        if (result && result.success === true) {
+            applyAuthoritativeStock(result, request);
+            clearStockIntent(request.operationId);
+            verifiedRecoveryOperationId = null;
+            inventoryNotice('stockRecoveryNotice', '');
+            return {ok: true, json: async () => result};
+        }
+        if (result && (result.code === 'stock_changed' || result.code === 'save_failed')) {
+            // A refusal now cannot erase an earlier uncertain partial save.
+            if (!explicitRecovery) {
+                clearStockIntent(request.operationId);
+                verifiedRecoveryOperationId = null;
             }
+            return {ok: true, json: async () => result};
         }
         throw uncertainStockSaveError();
+    } catch (error) {
+        // Never repeat a possibly committed write. Only query its identity.
+        if (await reconcilePendingMovementUnlocked()) return {ok: true, json: async () => ({success: true})};
+        const uncertain = uncertainStockSaveError();
+        uncertain.stockSaveMessage = 'Stock save is unconfirmed. Review the recorded save notice before another movement.';
+        throw uncertain;
     } finally {
+        clearTimeout(timeout);
         stockPostInFlight--;
     }
+    });
 }
 
 async function saveStockMovement(partId, part, updates, transaction) {
@@ -1556,7 +1707,6 @@ async function useParts() {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
-        inventory[partId][truck] = part[truck] - qty;
         
         document.getElementById('useQty').value = '1';
         document.getElementById('jobName').value = '';
@@ -1638,8 +1788,6 @@ async function loadTruck() {
         await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
-        inventory[partId].shop = part.shop - qty;
-        inventory[partId][truck] = part[truck] + qty;
         
         document.getElementById('loadQty').value = '1';
         clearSelectedPart('load');
@@ -1686,8 +1834,6 @@ async function returnToShop() {
         await requireStockSaveSuccess(response);
         
         // Update local inventory immediately
-        inventory[partId][truck] = part[truck] - qty;
-        inventory[partId].shop = part.shop + qty;
         
         document.getElementById('returnQty').value = '1';
         clearSelectedPart('return');
@@ -1742,8 +1888,6 @@ async function transferParts() {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
-        inventory[partId][fromTruck] = part[fromTruck] - qty;
-        inventory[partId][toTruck] = part[toTruck] + qty;
         
         document.getElementById('transferQty').value = '1';
         clearSelectedPart('transfer');
@@ -1783,7 +1927,6 @@ async function receiveStock() {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
-        inventory[partId].shop = part.shop + qty;
         
         document.getElementById('receiveQty').value = '1';
         clearSelectedPart('receive');
@@ -1822,7 +1965,6 @@ async function quickReceive(partId) {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
-        inventory[partId].shop = part.shop + parseInt(qty);
         
         updateDashboard();
         closePartDetailModal();
@@ -1865,8 +2007,6 @@ async function quickLoadToTruck(partId, truckId) {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
-        inventory[partId].shop = part.shop - parseInt(qty);
-        inventory[partId][truckId] = part[truckId] + parseInt(qty);
         
         updateDashboard();
         closePartDetailModal();
@@ -1912,7 +2052,6 @@ async function quickUseOnJob(partId) {
             lat: location ? location.lat : '',
             lon: location ? location.lon : ''
         });
-        inventory[partId][truck] = part[truck] - qty;
         
         updateDashboard();
         closePartDetailModal();
@@ -2175,6 +2314,8 @@ function updateDashboard() {
                 const minForTruck = part['minTruck_' + userTruck] || 0;
                 const item = document.createElement('div');
                 item.className = 'low-stock-item' + (part[userTruck] === 0 ? ' critical' : '');
+                item.dataset.partId = id;
+                item.dataset.stockLocation = userTruck;
                 
                 let imageHTML = '';
                 if (part.imageUrl && part.imageUrl.trim() !== '') {
@@ -2224,6 +2365,8 @@ function updateDashboard() {
                 const minForTruck = part['minTruck_' + truckId] || 0;
                 const item = document.createElement('div');
                 item.className = 'low-stock-item' + (part[truckId] === 0 ? ' critical' : '');
+                item.dataset.partId = id;
+                item.dataset.stockLocation = truckId;
                 
                 let imageHTML = '';
                 if (part.imageUrl && part.imageUrl.trim() !== '') {
@@ -2270,6 +2413,8 @@ function updateDashboard() {
             const part = inventory[id];
             const item = document.createElement('div');
             item.className = 'low-stock-item' + (part.shop === 0 ? ' critical' : '');
+            item.dataset.partId = id;
+            item.dataset.stockLocation = 'shop';
             
             let imageHTML = '';
             if (part.imageUrl && part.imageUrl.trim() !== '') {
@@ -2465,6 +2610,7 @@ function createPartCard(partId) {
     const part = inventory[partId];
     const card = document.createElement('div');
     card.className = 'part-card';
+    card.dataset.partId = partId;
     
     let imageHTML = '';
     if (part.imageUrl && part.imageUrl.trim() !== '') {
@@ -2821,11 +2967,11 @@ function openPartDetail(partId) {
     }
     
     let stockHTML = '<h3>Current Stock</h3><div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px;">';
-    stockHTML += `<div class="stock-badge ${part.shop < part.minStock ? 'stock-low' : 'stock-ok'}">Shop: ${part.shop} (Min: ${part.minStock})</div>`;
+    stockHTML += `<div data-stock-location="shop" class="stock-badge ${part.shop < part.minStock ? 'stock-low' : 'stock-ok'}">Shop: ${part.shop} (Min: ${part.minStock})</div>`;
     visibleLocationIds().forEach(truckId => {
         const minForTruck = part['minTruck_' + truckId] || 0;
         const isLow = part[truckId] < minForTruck;
-        stockHTML += `<div class="stock-badge ${isLow ? 'stock-low' : 'stock-ok'}">${trucks[truckId].name}: ${part[truckId]} (Min: ${minForTruck})</div>`;
+        stockHTML += `<div data-stock-location="${truckId}" class="stock-badge ${isLow ? 'stock-low' : 'stock-ok'}">${trucks[truckId].name}: ${part[truckId]} (Min: ${minForTruck})</div>`;
     });
     stockHTML += '</div>';
     
@@ -3705,7 +3851,6 @@ async function processQuickLoad() {
                     lat: gpsLocation ? gpsLocation.lat : '',
                     lon: gpsLocation ? gpsLocation.lon : ''
                 });
-                inventory[partId].shop = part.shop + qty;
                 completedParts++;
             } else {
                 if (part.shop < qty) continue;
@@ -3725,8 +3870,6 @@ async function processQuickLoad() {
                     lat: gpsLocation ? gpsLocation.lat : '',
                     lon: gpsLocation ? gpsLocation.lon : ''
                 });
-                inventory[partId].shop = part.shop - qty;
-                inventory[partId][location] = part[location] + qty;
                 completedParts++;
             }
         }
